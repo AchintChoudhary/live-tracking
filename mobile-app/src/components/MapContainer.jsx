@@ -46,6 +46,8 @@ export const MapContainer = ({
     longitudeDelta: 0.04,
   };
 
+  const hasInitiallyCentered = useRef(false);
+
   // Center map on active target
   const handleCenterOnLocation = () => {
     if (mapRef.current && activeTargetLoc) {
@@ -53,25 +55,26 @@ export const MapContainer = ({
         {
           latitude: activeTargetLoc.latitude,
           longitude: activeTargetLoc.longitude,
-          latitudeDelta: 0.015,
-          longitudeDelta: 0.015,
+          latitudeDelta: 0.018,
+          longitudeDelta: 0.018,
         },
-        600
+        500
       );
     }
   };
 
-  // If vehicle moves substantially, animate camera smoothly
+  // Center map once upon initial target ready to avoid camera hijacking on every GPS tick
   useEffect(() => {
-    if (mapReady && mapRef.current && activeTargetLoc) {
+    if (mapReady && mapRef.current && activeTargetLoc && !hasInitiallyCentered.current) {
+      hasInitiallyCentered.current = true;
       mapRef.current.animateToRegion(
         {
           latitude: activeTargetLoc.latitude,
           longitude: activeTargetLoc.longitude,
-          latitudeDelta: 0.02,
-          longitudeDelta: 0.02,
+          latitudeDelta: 0.025,
+          longitudeDelta: 0.025,
         },
-        500
+        600
       );
     }
   }, [activeTargetLoc?.latitude, activeTargetLoc?.longitude, mapReady]);

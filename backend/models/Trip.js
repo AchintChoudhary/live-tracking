@@ -30,6 +30,10 @@ const tripSchema = new mongoose.Schema(
       enum: ['scheduled', 'in-progress', 'completed', 'cancelled'],
       default: 'in-progress',
     },
+    liveStatus: {
+      type: String,
+      default: 'On Route',
+    },
     startLocation: {
       name: { type: String, default: 'Origin Terminal' },
       latitude: { type: Number, required: true },

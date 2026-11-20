@@ -1,7 +1,9 @@
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
 
-dotenv.config();
+const path = require('path');
+dotenv.config({ path: path.resolve(__dirname, '.env') });
+dotenv.config(); // fallback to current working directory
 
 const User = require('./models/User');
 const Vehicle = require('./models/Vehicle');

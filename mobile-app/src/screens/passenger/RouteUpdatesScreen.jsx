@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { COLORS, SHADOWS } from '../../utils/theme';
 import { Header } from '../../components/Header';
 import { LiveBadge } from '../../components/LiveBadge';
@@ -11,36 +11,109 @@ import {
   RadioTowerIcon,
 } from '../../components/Icons';
 import { socketService } from '../../services/socket';
+import { routeApi } from '../../services/api';
+import { calculateDistanceKm, calculateETA } from '../../utils/distance';
 
 export const RouteUpdatesScreen = ({ route: navRoute, navigation }) => {
-  const { route, selectedStop, liveLocation } = navRoute.params || {};
+  const { route: initialRoute, selectedStop: initialSelectedStop, liveLocation: initialLocation } = navRoute.params || {};
 
+  const [activeRoute, setActiveRoute] = useState(initialRoute || null);
+  const [selectedStop, setSelectedStop] = useState(initialSelectedStop || null);
+  const [currentLocation, setCurrentLocation] = useState(initialLocation || null);
   const [liveStatus, setLiveStatus] = useState('On Route • Regular Transit Service');
-  const [activeStopIndex, setActiveStopIndex] = useState(1);
+  const [activeStopIndex, setActiveStopIndex] = useState(0);
 
+  // If opened directly from tabs without params, fetch first route
+  useEffect(() => {
+    if (!activeRoute) {
+      routeApi.getAllRoutes()
+        .then((res) => {
+          if (res.data?.data && res.data.data.length > 0) {
+            setActiveRoute(res.data.data[0]);
+            if (res.data.data[0].stops && res.data.data[0].stops.length > 0) {
+              setSelectedStop(res.data.data[0].stops[0]);
+            }
+          }
+        })
+        .catch(() => {});
+    }
+  }, [activeRoute]);
+
+  // Connect to Socket.IO and listen for real-time location and status telemetry
   useEffect(() => {
     socketService.connect();
-    const unsub = socketService.onTripStatus((data) => {
-      if (data?.status) {
-        setLiveStatus(data.status);
+
+    const unsubStatus = socketService.onTripStatus((data) => {
+      const statusText = data?.liveStatus || data?.status;
+      if (statusText) {
+        setLiveStatus(statusText);
       }
     });
+
+    const unsubLoc = socketService.onVehicleLocation((data) => {
+      if (data && data.latitude && data.longitude) {
+        setCurrentLocation(data);
+      }
+    });
+
     return () => {
-      if (unsub) unsub();
+      if (unsubStatus) unsubStatus();
+      if (unsubLoc) unsubLoc();
     };
   }, []);
 
-  // Build dynamic timeline if route stops are present, else fallback to standard transit corridor
-  const stopsList = route?.stops && route.stops.length > 0 ? route.stops : null;
+  // Compute active stop index dynamically based on incoming GPS coordinates
+  const stopsList = activeRoute?.stops && activeRoute.stops.length > 0 ? activeRoute.stops : null;
 
+  useEffect(() => {
+    if (stopsList && currentLocation) {
+      let closestIdx = 0;
+      let minDistance = Infinity;
+
+      stopsList.forEach((stop, idx) => {
+        const d = calculateDistanceKm(
+          currentLocation.latitude,
+          currentLocation.longitude,
+          stop.latitude,
+          stop.longitude
+        );
+        if (d < minDistance) {
+          minDistance = d;
+          closestIdx = idx;
+        }
+      });
+
+      // If within 100 meters, bus is at this stop; otherwise if ahead, advance index
+      setActiveStopIndex(closestIdx);
+    }
+  }, [currentLocation, stopsList]);
+
+  // Dynamic timeline generator
   const timelineEvents = stopsList
     ? stopsList.map((stop, idx) => {
-        const isSelected = selectedStop?.name === stop.name;
         const isPassed = idx < activeStopIndex;
         const isCurrent = idx === activeStopIndex;
 
         let statusText = 'Upcoming Stop';
         let statusType = 'muted';
+
+        // Calculate dynamic ETA to this stop
+        let dynamicEta = `${Math.max(2, (idx - activeStopIndex) * 6)} mins`;
+        if (currentLocation) {
+          const distToStop = calculateDistanceKm(
+            currentLocation.latitude,
+            currentLocation.longitude,
+            stop.latitude,
+            stop.longitude
+          );
+          if (isCurrent) {
+            const etaMins = calculateETA(distToStop, currentLocation.speed || 25);
+            dynamicEta = distToStop < 0.1 ? 'Arriving Now' : `${etaMins} mins`;
+          } else if (idx > activeStopIndex) {
+            const cumulativeDist = distToStop + (idx - activeStopIndex) * 1.5;
+            dynamicEta = `${calculateETA(cumulativeDist, currentLocation.speed || 25)} mins`;
+          }
+        }
 
         if (isPassed) {
           statusText = 'At Stop (Completed)';
@@ -56,13 +129,18 @@ export const RouteUpdatesScreen = ({ route: navRoute, navigation }) => {
         return {
           id: `stop-timeline-${idx}`,
           title: `Stop #${idx + 1}: ${stop.name}`,
-          subtitle: idx === 0 ? 'Route Departure Station' : idx === stopsList.length - 1 ? 'Final Terminus' : 'Designated Commuter Stop',
-          time: `+${idx * 7}m`,
+          subtitle:
+            idx === 0
+              ? 'Route Departure Station'
+              : idx === stopsList.length - 1
+              ? 'Final Terminus'
+              : 'Designated Commuter Stop',
+          time: `+${idx * 6}m`,
           status: statusText,
           statusType,
           completed: isPassed,
           active: isCurrent,
-          eta: isCurrent ? '4 mins' : `${Math.max(1, (idx - activeStopIndex) * 7)} mins`,
+          eta: isPassed ? 'Departed' : dynamicEta,
         };
       })
     : [
@@ -74,6 +152,7 @@ export const RouteUpdatesScreen = ({ route: navRoute, navigation }) => {
           status: 'Departed On Schedule',
           statusType: 'success',
           completed: true,
+          eta: 'Departed',
         },
         {
           id: '2',
@@ -83,6 +162,7 @@ export const RouteUpdatesScreen = ({ route: navRoute, navigation }) => {
           status: 'At Stop (Completed)',
           statusType: 'success',
           completed: true,
+          eta: 'Departed',
         },
         {
           id: '3',
@@ -92,16 +172,16 @@ export const RouteUpdatesScreen = ({ route: navRoute, navigation }) => {
           status: liveStatus || 'On Route • Next Stop',
           statusType: 'primary',
           active: true,
-          eta: '4 mins',
+          eta: '3 mins',
         },
         {
           id: '4',
           title: 'Stop #3: Financial District Crossing',
-          subtitle: 'Moderate morning traffic congestion',
+          subtitle: 'Transit corridor stop',
           time: '08:38 AM',
-          status: 'Delayed (+3 mins)',
+          status: 'Scheduled Approach',
           statusType: 'warning',
-          eta: '16 mins',
+          eta: '12 mins',
         },
         {
           id: '5',
@@ -110,7 +190,7 @@ export const RouteUpdatesScreen = ({ route: navRoute, navigation }) => {
           time: '08:52 AM',
           status: 'Estimated Arrival Time',
           statusType: 'muted',
-          eta: '30 mins',
+          eta: '22 mins',
         },
         {
           id: '6',
@@ -119,7 +199,7 @@ export const RouteUpdatesScreen = ({ route: navRoute, navigation }) => {
           time: '09:05 AM',
           status: 'Terminus Arrival',
           statusType: 'muted',
-          eta: '43 mins',
+          eta: '35 mins',
         },
       ];
 
@@ -127,7 +207,7 @@ export const RouteUpdatesScreen = ({ route: navRoute, navigation }) => {
     <View style={styles.container}>
       <Header
         title="Route Updates & Timeline"
-        subtitle={route?.routeName || 'North-South Metro Corridor'}
+        subtitle={activeRoute?.routeName || 'North-South Metro Corridor'}
         showBack
         onBack={() => navigation.goBack()}
         rightAction={<LiveBadge label="MONITORING" size="sm" />}
@@ -138,8 +218,8 @@ export const RouteUpdatesScreen = ({ route: navRoute, navigation }) => {
         <View style={[styles.statusSummaryCard, SHADOWS.sm]}>
           <View style={styles.summaryTopRow}>
             <View>
-              <Text style={styles.routeCodeTag}>{route?.routeNumber || 'R-101'}</Text>
-              <Text style={styles.routeHeaderTitle}>{route?.routeName || 'North-South Metro Express'}</Text>
+              <Text style={styles.routeCodeTag}>{activeRoute?.routeNumber || 'R-101'}</Text>
+              <Text style={styles.routeHeaderTitle}>{activeRoute?.routeName || 'North-South Metro Express'}</Text>
             </View>
             <View style={styles.livePulseBox}>
               <View style={styles.livePulseDot} />

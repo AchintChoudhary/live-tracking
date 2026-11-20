@@ -86,7 +86,23 @@ export const PassengerDashboard = ({ navigation }) => {
             placeholder="Search route, stop, or bus number..."
             value={searchQuery}
             onChangeText={setSearchQuery}
-            icon={<SearchIcon size={20} color={COLORS.textSecondary} />}
+            onSubmitEditing={() => {
+              if (searchQuery.trim()) {
+                navigation.navigate('Routes', { searchQuery: searchQuery.trim() });
+              }
+            }}
+            returnKeyType="search"
+            icon={
+              <TouchableOpacity
+                onPress={() => {
+                  if (searchQuery.trim()) {
+                    navigation.navigate('Routes', { searchQuery: searchQuery.trim() });
+                  }
+                }}
+              >
+                <SearchIcon size={20} color={COLORS.primary} />
+              </TouchableOpacity>
+            }
             containerStyle={{ marginBottom: 0 }}
           />
         </View>

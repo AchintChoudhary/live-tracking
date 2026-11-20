@@ -212,7 +212,7 @@ exports.endTrip = async (req, res, next) => {
 // @access  Private (Driver only)
 exports.updateTripStatus = async (req, res, next) => {
   try {
-    const { tripId, status, stopName, eta } = req.body;
+    const { tripId, status, liveStatus, stopName, eta } = req.body;
     const trip = await Trip.findById(tripId);
     if (!trip) {
       return res.status(404).json({ success: false, message: 'Trip not found' });
@@ -229,7 +229,16 @@ exports.updateTripStatus = async (req, res, next) => {
       });
     }
 
-    if (status) trip.status = status;
+    // Assign human-readable liveStatus
+    const currentLiveStatus = liveStatus || status || 'On Route';
+    trip.liveStatus = currentLiveStatus;
+
+    // Only update core lifecycle status if it is a valid enum value
+    const validStatuses = ['scheduled', 'in-progress', 'completed', 'cancelled'];
+    if (status && validStatuses.includes(status)) {
+      trip.status = status;
+    }
+
     await trip.save();
 
     // Broadcast trip status update via Socket.IO
@@ -237,7 +246,8 @@ exports.updateTripStatus = async (req, res, next) => {
     if (io) {
       const payload = {
         tripId,
-        status,
+        status: currentLiveStatus,
+        liveStatus: currentLiveStatus,
         stopName,
         eta,
         timestamp: new Date().toISOString(),
@@ -248,6 +258,7 @@ exports.updateTripStatus = async (req, res, next) => {
 
     res.json({
       success: true,
+      message: 'Trip status updated successfully',
       data: trip,
     });
   } catch (error) {

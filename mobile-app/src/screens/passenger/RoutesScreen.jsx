@@ -23,12 +23,19 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export const RoutesScreen = ({ navigation, route: navRoute }) => {
   const initialFilter = navRoute?.params?.filter || 'all';
+  const initialSearch = navRoute?.params?.searchQuery || '';
   const [activeFilter, setActiveFilter] = useState(initialFilter);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(initialSearch);
   const [routes, setRoutes] = useState([]);
   const [favorites, setFavorites] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    if (navRoute?.params?.searchQuery != null) {
+      setSearchQuery(navRoute.params.searchQuery);
+    }
+  }, [navRoute?.params?.searchQuery]);
 
   useEffect(() => {
     AsyncStorage.getItem('@favorite_routes')

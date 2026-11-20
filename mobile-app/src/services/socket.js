@@ -60,32 +60,52 @@ class SocketService {
   // ==========================================
 
   driverJoin(driverId, callback) {
-    if (this.socket) {
+    if (this.socket && this.connected) {
       this.socket.emit('driver:join', { driverId }, callback);
+    } else {
+      this.connect().then(() => {
+        if (this.socket) this.socket.emit('driver:join', { driverId }, callback);
+      });
     }
   }
 
   startTrip(tripData, callback) {
-    if (this.socket) {
+    if (this.socket && this.connected) {
       this.socket.emit('trip:start', tripData, callback);
+    } else {
+      this.connect().then(() => {
+        if (this.socket) this.socket.emit('trip:start', tripData, callback);
+      });
     }
   }
 
   sendLocationUpdate(locationData, callback) {
-    if (this.socket) {
+    if (this.socket && this.connected) {
       this.socket.emit('location:update', locationData, callback);
+    } else {
+      this.connect().then(() => {
+        if (this.socket) this.socket.emit('location:update', locationData, callback);
+      });
     }
   }
 
   sendTripStatus(statusData, callback) {
-    if (this.socket) {
+    if (this.socket && this.connected) {
       this.socket.emit('trip:status', statusData, callback);
+    } else {
+      this.connect().then(() => {
+        if (this.socket) this.socket.emit('trip:status', statusData, callback);
+      });
     }
   }
 
   sendTripEnd(tripData, callback) {
-    if (this.socket) {
+    if (this.socket && this.connected) {
       this.socket.emit('trip:end', tripData, callback);
+    } else {
+      this.connect().then(() => {
+        if (this.socket) this.socket.emit('trip:end', tripData, callback);
+      });
     }
   }
 
@@ -94,8 +114,12 @@ class SocketService {
   // ==========================================
 
   passengerJoin(passengerId, callback) {
-    if (this.socket) {
+    if (this.socket && this.connected) {
       this.socket.emit('passenger:join', { passengerId }, callback);
+    } else {
+      this.connect().then(() => {
+        if (this.socket) this.socket.emit('passenger:join', { passengerId }, callback);
+      });
     }
   }
 
@@ -104,8 +128,12 @@ class SocketService {
     this.currentTripId = tripId;
     this.activeSubscriptions.add(tripId);
 
-    if (this.socket) {
+    if (this.socket && this.connected) {
       this.socket.emit('trip:subscribe', { tripId }, callback);
+    } else {
+      this.connect().then(() => {
+        if (this.socket) this.socket.emit('trip:subscribe', { tripId }, callback);
+      });
     }
   }
 
@@ -116,7 +144,7 @@ class SocketService {
       this.currentTripId = null;
     }
 
-    if (this.socket) {
+    if (this.socket && this.connected) {
       this.socket.emit('trip:unsubscribe', { tripId }, callback);
     }
   }
@@ -131,44 +159,46 @@ class SocketService {
   }
 
   // ==========================================
-  // REAL-TIME LISTENERS
+  // REAL-TIME LISTENERS (GUARANTEED NULL-SAFE)
   // ==========================================
 
-  onVehicleLocation(callback) {
-    if (!this.socket) this.connect();
-    // Remove previous duplicate listeners before registering
-    this.socket.off('vehicle:location');
-    this.socket.on('vehicle:location', callback);
-    return () => {
-      if (this.socket) this.socket.off('vehicle:location', callback);
+  on(event, callback) {
+    let isSubscribed = true;
+    const attach = () => {
+      if (this.socket && isSubscribed) {
+        this.socket.off(event, callback);
+        this.socket.on(event, callback);
+      }
     };
+
+    if (this.socket) {
+      attach();
+    } else {
+      this.connect().then(() => attach());
+    }
+
+    return () => {
+      isSubscribed = false;
+      if (this.socket) {
+        this.socket.off(event, callback);
+      }
+    };
+  }
+
+  onVehicleLocation(callback) {
+    return this.on('vehicle:location', callback);
   }
 
   onTripStarted(callback) {
-    if (!this.socket) this.connect();
-    this.socket.off('trip:started');
-    this.socket.on('trip:started', callback);
-    return () => {
-      if (this.socket) this.socket.off('trip:started', callback);
-    };
+    return this.on('trip:started', callback);
   }
 
   onTripStatus(callback) {
-    if (!this.socket) this.connect();
-    this.socket.off('trip:status');
-    this.socket.on('trip:status', callback);
-    return () => {
-      if (this.socket) this.socket.off('trip:status', callback);
-    };
+    return this.on('trip:status', callback);
   }
 
   onTripCompleted(callback) {
-    if (!this.socket) this.connect();
-    this.socket.off('trip:completed');
-    this.socket.on('trip:completed', callback);
-    return () => {
-      if (this.socket) this.socket.off('trip:completed', callback);
-    };
+    return this.on('trip:completed', callback);
   }
 
   disconnect() {

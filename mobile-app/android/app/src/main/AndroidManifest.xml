@@ -31,12 +31,6 @@
           android:name="com.google.android.geo.API_KEY"
           android:value="AIzaSy_YOUR_GOOGLE_MAPS_API_KEY_HERE" />
 
-      <!-- Foreground service for continuous driver location tracking -->
-      <service
-          android:name="com.asterinet.react.bgactions.RNBackgroundActionsTask"
-          android:foregroundServiceType="location"
-          android:exported="false" />
-
       <activity
         android:name=".MainActivity"
         android:label="TransitTrack Live"

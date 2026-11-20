@@ -39,6 +39,7 @@ export const LiveTrackingScreen = ({ route: navRoute, navigation }) => {
   const [lastUpdateText, setLastUpdateText] = useState('Connecting...');
   const [loading, setLoading] = useState(true);
   const [isSocketConnected, setIsSocketConnected] = useState(false);
+  const [tripLiveStatus, setTripLiveStatus] = useState('On Schedule');
 
   const activeTripSubscribedRef = useRef(null);
 
@@ -95,6 +96,7 @@ export const LiveTrackingScreen = ({ route: navRoute, navigation }) => {
   useEffect(() => {
     let unsubscribeLocation = null;
     let unsubscribeStatus = null;
+    let unsubscribeStarted = null;
     let unsubscribeCompleted = null;
 
     socketService.connect().then(() => {
@@ -115,6 +117,24 @@ export const LiveTrackingScreen = ({ route: navRoute, navigation }) => {
           }
         });
       }
+
+      // Listen for dynamically initiated trips on this route
+      unsubscribeStarted = socketService.onTripStarted((data) => {
+        if (data && (!activeRoute || data.routeId === activeRoute._id || data.routeId === activeRoute.id)) {
+          loadData();
+          socketService.subscribeTrip(data.tripId);
+        }
+      });
+
+      // Listen for real-time driver trip status reports
+      unsubscribeStatus = socketService.onTripStatus((data) => {
+        if (data && (!selectedVehicle || data.tripId === selectedVehicle?.tripId)) {
+          const statusText = data.liveStatus || data.status;
+          if (statusText) {
+            setTripLiveStatus(statusText);
+          }
+        }
+      });
 
       // Listen for vehicle location updates
       unsubscribeLocation = socketService.onVehicleLocation((data) => {
@@ -140,19 +160,21 @@ export const LiveTrackingScreen = ({ route: navRoute, navigation }) => {
         if (data.tripId === selectedVehicle?.tripId) {
           Alert.alert('Trip Concluded', 'The driver has completed this route. Telemetry has stopped.');
           setEtaDisplay('Trip Completed');
+          setTripLiveStatus('Concluded');
         }
       });
     });
 
     return () => {
       if (unsubscribeLocation) unsubscribeLocation();
+      if (unsubscribeStarted) unsubscribeStarted();
       if (unsubscribeStatus) unsubscribeStatus();
       if (unsubscribeCompleted) unsubscribeCompleted();
       if (activeTripSubscribedRef.current) {
         socketService.unsubscribeTrip(activeTripSubscribedRef.current);
       }
     };
-  }, [selectedVehicle?.tripId]);
+  }, [selectedVehicle?.tripId, activeRoute?._id]);
 
   // 3. Compute ETA and remaining distance
   useEffect(() => {
