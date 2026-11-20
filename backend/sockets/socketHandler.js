@@ -4,10 +4,14 @@ const Trip = require('../models/Trip');
 const Vehicle = require('../models/Vehicle');
 const { isValidCoordinates } = require('../utils/distanceCalculator');
 
+const isValidOptionalTelemetry = (value, min, max = Infinity) =>
+  value == null || (Number.isFinite(value) && value >= min && value <= max);
+
 /**
  * In-memory location cache for low-latency live broadcasting and instant passenger sync
  */
 const activeTripLocations = new Map();
+const lastLocationPersistence = new Map();
 
 /**
  * Socket.IO Real-Time Tracking Engine
@@ -20,13 +24,12 @@ const initSocketHandler = (io) => {
     const token = socket.handshake.auth?.token || socket.handshake.query?.token;
     if (token) {
       try {
-        const decoded = jwt.verify(
-          token,
-          process.env.JWT_SECRET || 'transit_live_jwt_super_secret_key_2026_production'
-        );
+        if (!process.env.JWT_SECRET) return next(new Error('Socket authentication is not configured'));
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
         socket.user = decoded;
+        socket.user.role = decoded.role;
       } catch (err) {
-        console.log('[Socket Auth Warning]: Token verification notice:', err.message);
+        return next(new Error('Invalid or expired socket authentication token'));
       }
     }
     // Allow connection (passengers can also inspect public transit map without login)
@@ -43,6 +46,14 @@ const initSocketHandler = (io) => {
     // driver:join
     socket.on('driver:join', (data, callback) => {
       const driverId = data?.driverId || socket.user?.id;
+      if (!socket.user?.id) {
+        if (typeof callback === 'function') callback({ success: false, error: 'Authentication required' });
+        return;
+      }
+      if (data?.driverId && data.driverId !== socket.user.id) {
+        if (typeof callback === 'function') callback({ success: false, error: 'Cannot join another driver channel' });
+        return;
+      }
       if (driverId) {
         socket.join(`driver:${driverId}`);
         console.log(`[Socket.IO] Driver registered: ${driverId} in room driver:${driverId}`);
@@ -57,7 +68,11 @@ const initSocketHandler = (io) => {
     // trip:start
     socket.on('trip:start', async (data, callback) => {
       try {
-        const { tripId, vehicleId, routeId } = data || {};
+        const { tripId } = data || {};
+        if (!socket.user?.id) {
+          if (typeof callback === 'function') callback({ success: false, error: 'Authentication required' });
+          return;
+        }
         if (!tripId) {
           if (typeof callback === 'function') callback({ success: false, error: 'tripId is required' });
           return;
@@ -65,7 +80,19 @@ const initSocketHandler = (io) => {
 
         console.log(`[Socket.IO trip:start] Trip #${tripId} initiated by socket ${socket.id}`);
 
+        const trip = await Trip.findById(tripId).select('driverId status vehicleId routeId');
+        if (!trip || trip.status !== 'in-progress') {
+          if (typeof callback === 'function') callback({ success: false, error: 'Active trip not found' });
+          return;
+        }
+        if (trip.driverId.toString() !== socket.user.id) {
+          if (typeof callback === 'function') callback({ success: false, error: 'Not authorized for this trip' });
+          return;
+        }
+
         socket.join(`trip:${tripId}`);
+        const vehicleId = trip.vehicleId;
+        const routeId = trip.routeId;
 
         const payload = {
           tripId,
@@ -74,8 +101,7 @@ const initSocketHandler = (io) => {
           timestamp: new Date().toISOString(),
         };
 
-        // Broadcast to passengers on this route
-        io.emit('trip:started', payload);
+        io.to(`route:${routeId}`).emit('trip:started', payload);
 
         if (typeof callback === 'function') {
           callback({ success: true, data: payload });
@@ -89,15 +115,19 @@ const initSocketHandler = (io) => {
     // location:update
     socket.on('location:update', async (data, callback) => {
       try {
+        if (!socket.user?.id) {
+          if (typeof callback === 'function') callback({ success: false, error: 'Authentication required' });
+          return;
+        }
         const {
           tripId,
           vehicleId,
           driverId,
           latitude,
           longitude,
-          accuracy = 0,
-          speed = 0,
-          heading = 0,
+          accuracy,
+          speed,
+          heading,
           timestamp,
         } = data || {};
 
@@ -116,11 +146,25 @@ const initSocketHandler = (io) => {
           }
           return;
         }
+        if (
+          !isValidOptionalTelemetry(accuracy, 0) ||
+          !isValidOptionalTelemetry(speed, 0) ||
+          !isValidOptionalTelemetry(heading, 0, 360)
+        ) {
+          if (typeof callback === 'function') callback({ success: false, error: 'Invalid GPS telemetry values' });
+          return;
+        }
+
+        const locationTime = timestamp ? new Date(timestamp).getTime() : Date.now();
+        if (!Number.isFinite(locationTime) || locationTime > Date.now() + 30000 || Date.now() - locationTime > 120000) {
+          if (typeof callback === 'function') callback({ success: false, error: 'GPS update timestamp is stale or invalid' });
+          return;
+        }
 
         // 2. Reject location updates if trip has ended
         let tripRecord = null;
         try {
-          tripRecord = await Trip.findById(tripId).select('status driverId');
+          tripRecord = await Trip.findById(tripId).select('status driverId vehicleId');
           if (tripRecord && tripRecord.status === 'completed') {
             console.warn(`[Socket.IO Location] Rejected: Trip ${tripId} is already completed.`);
             if (typeof callback === 'function') {
@@ -129,10 +173,29 @@ const initSocketHandler = (io) => {
             return;
           }
         } catch (e) {
-          // If mongo temporary timeout, proceed with broadcast to avoid blocking live stream
+          if (typeof callback === 'function') callback({ success: false, error: 'Unable to verify active trip' });
+          return;
         }
 
-        const effectiveDriverId = driverId || socket.user?.id || tripRecord?.driverId;
+        if (!tripRecord || tripRecord.status !== 'in-progress') {
+          if (typeof callback === 'function') callback({ success: false, error: 'Active trip not found' });
+          return;
+        }
+        if (tripRecord.driverId.toString() !== socket.user.id) {
+          if (typeof callback === 'function') callback({ success: false, error: 'Not authorized to update this trip' });
+          return;
+        }
+        if (tripRecord.vehicleId.toString() !== vehicleId.toString()) {
+          if (typeof callback === 'function') callback({ success: false, error: 'vehicleId does not belong to this trip' });
+          return;
+        }
+        const previousLocation = activeTripLocations.get(tripId.toString());
+        if (previousLocation && new Date(previousLocation.timestamp).getTime() > locationTime) {
+          if (typeof callback === 'function') callback({ success: false, error: 'Out-of-order GPS update rejected' });
+          return;
+        }
+
+        const effectiveDriverId = socket.user.id;
 
         const locationPayload = {
           tripId,
@@ -140,34 +203,45 @@ const initSocketHandler = (io) => {
           driverId: effectiveDriverId,
           latitude,
           longitude,
-          accuracy: Math.round(accuracy || 0),
-          speed: Math.round(speed || 0),
-          heading: Math.round(heading || 0),
-          timestamp: timestamp || new Date().toISOString(),
+          ...(accuracy != null ? { accuracy: Math.round(accuracy) } : {}),
+          ...(speed != null ? { speed: Math.round(speed) } : {}),
+          ...(heading != null ? { heading: Math.round(heading) } : {}),
+          timestamp: new Date(locationTime).toISOString(),
         };
 
         // 3. Cache latest location in memory for instant retrieval
         activeTripLocations.set(tripId.toString(), locationPayload);
 
-        // 4. Broadcast live vehicle location to trip room and globally
+        // 4. Broadcast only to passengers subscribed to this trip
         io.to(`trip:${tripId}`).emit('vehicle:location', locationPayload);
-        io.emit('vehicle:location', locationPayload);
 
-        // 5. Asynchronously persist to MongoDB
-        try {
+        // 5. Persist at a bounded frequency to avoid one database write per network frame
+        const now = Date.now();
+        const lastPersisted = lastLocationPersistence.get(tripId.toString()) || 0;
+        if (now - lastPersisted >= 3000) {
+          lastLocationPersistence.set(tripId.toString(), now);
           VehicleLocation.create({
             vehicleId,
             driverId: effectiveDriverId,
             tripId,
             latitude,
             longitude,
-            accuracy,
-            speed,
-            heading,
-            timestamp: new Date(timestamp || Date.now()),
-          }).catch(() => {});
-        } catch (dbErr) {
-          // Non-blocking
+            ...(accuracy != null ? { accuracy } : {}),
+            ...(speed != null ? { speed } : {}),
+            ...(heading != null ? { heading } : {}),
+            timestamp: new Date(locationTime),
+          }).catch((dbErr) => {
+            console.error('[Socket.IO location persistence error]:', dbErr.message);
+          });
+          Vehicle.findByIdAndUpdate(vehicleId, {
+            currentLocation: {
+              latitude,
+              longitude,
+              timestamp: new Date(locationTime),
+            },
+          }).catch((dbErr) => {
+            console.error('[Socket.IO vehicle location update error]:', dbErr.message);
+          });
         }
 
         // 6. Acknowledge receipt to driver client
@@ -190,6 +264,10 @@ const initSocketHandler = (io) => {
     socket.on('trip:status', (data, callback) => {
       try {
         const { tripId, status, stopName, eta } = data || {};
+        if (!socket.user?.id) {
+          if (typeof callback === 'function') callback({ success: false, error: 'Authentication required' });
+          return;
+        }
         console.log(`[Socket.IO trip:status]: Trip ${tripId} status: ${status}`);
 
         const payload = {
@@ -200,12 +278,17 @@ const initSocketHandler = (io) => {
           timestamp: new Date().toISOString(),
         };
 
-        io.to(`trip:${tripId}`).emit('trip:status', payload);
-        io.emit('trip:status', payload);
-
-        if (typeof callback === 'function') {
-          callback({ success: true, payload });
-        }
+        Trip.findById(tripId).select('driverId status').then((trip) => {
+          if (!trip || trip.status !== 'in-progress' || trip.driverId.toString() !== socket.user.id) {
+            if (typeof callback === 'function') callback({ success: false, error: 'Not authorized to update this trip' });
+            return;
+          }
+          Trip.findByIdAndUpdate(tripId, { liveStatus: status }).catch(() => {});
+          io.to(`trip:${tripId}`).emit('trip:status', payload);
+          if (typeof callback === 'function') callback({ success: true, payload });
+        }).catch(() => {
+          if (typeof callback === 'function') callback({ success: false, error: 'Unable to verify trip' });
+        });
       } catch (err) {
         if (typeof callback === 'function') callback({ success: false, error: err.message });
       }
@@ -215,16 +298,27 @@ const initSocketHandler = (io) => {
     socket.on('trip:end', async (data, callback) => {
       try {
         const { tripId, vehicleId } = data || {};
+        if (!socket.user?.id) {
+          if (typeof callback === 'function') callback({ success: false, error: 'Authentication required' });
+          return;
+        }
         console.log(`[Socket.IO trip:end]: Concluded trip ${tripId}`);
 
         if (tripId) {
+          const trip = await Trip.findById(tripId).select('driverId status');
+          if (!trip || trip.driverId.toString() !== socket.user.id) {
+            if (typeof callback === 'function') callback({ success: false, error: 'Not authorized to end this trip' });
+            return;
+          }
+          if (trip.status !== 'completed') {
+            if (typeof callback === 'function') {
+              callback({ success: false, error: 'Complete the trip through the authenticated trip endpoint first' });
+            }
+            return;
+          }
           activeTripLocations.delete(tripId.toString());
+          lastLocationPersistence.delete(tripId.toString());
 
-          // Mark trip in DB if not already done
-          Trip.findByIdAndUpdate(tripId, {
-            status: 'completed',
-            endTime: new Date(),
-          }).catch(() => {});
         }
 
         const payload = {
@@ -235,7 +329,6 @@ const initSocketHandler = (io) => {
         };
 
         io.to(`trip:${tripId}`).emit('trip:completed', payload);
-        io.emit('trip:completed', payload);
 
         if (typeof callback === 'function') {
           callback({ success: true, payload });
@@ -262,7 +355,8 @@ const initSocketHandler = (io) => {
     });
 
     // trip:subscribe (and compatible alias trip:join)
-    const handleSubscribe = ({ tripId }, callback) => {
+    const handleSubscribe = (data = {}, callback) => {
+      const { tripId } = data;
       if (!tripId) {
         if (typeof callback === 'function') callback({ success: false, error: 'tripId is required' });
         return;
@@ -310,4 +404,9 @@ const initSocketHandler = (io) => {
   });
 };
 
-module.exports = { initSocketHandler, activeTripLocations };
+const clearTripLocationCache = (tripId) => {
+  activeTripLocations.delete(String(tripId));
+  lastLocationPersistence.delete(String(tripId));
+};
+
+module.exports = { initSocketHandler, activeTripLocations, clearTripLocationCache };

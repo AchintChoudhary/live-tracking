@@ -21,18 +21,8 @@
         "INTERNET",
         "ACCESS_NETWORK_STATE",
         "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION",
-        "ACCESS_BACKGROUND_LOCATION",
-        "FOREGROUND_SERVICE",
-        "FOREGROUND_SERVICE_LOCATION",
-        "POST_NOTIFICATIONS",
-        "WAKE_LOCK"
-      ],
-      "config": {
-        "googleMaps": {
-          "apiKey": "AIzaSy_YOUR_GOOGLE_MAPS_API_KEY_HERE"
-        }
-      }
+        "ACCESS_COARSE_LOCATION"
+      ]
     },
     "plugins": []
   }

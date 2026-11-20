@@ -2,6 +2,9 @@ const Trip = require('../models/Trip');
 const Vehicle = require('../models/Vehicle');
 const Route = require('../models/Route');
 const VehicleLocation = require('../models/VehicleLocation');
+const mongoose = require('mongoose');
+const { isValidCoordinates } = require('../utils/distanceCalculator');
+const { clearTripLocationCache } = require('../sockets/socketHandler');
 
 // @desc    Get driver dashboard metrics & active trip status
 // @route   GET /api/driver/dashboard
@@ -30,8 +33,9 @@ exports.getDashboard = async (req, res, next) => {
     ]);
     const totalDistance = distanceAgg[0]?.totalDist || 0;
 
-    // 3. Find assigned vehicle
-    const assignedVehicle = await Vehicle.findOne({ assignedDriver: driverId });
+    const assignedVehicles = await Vehicle.find({ assignedDriver: driverId, active: true })
+      .populate('assignedRoute')
+      .sort({ vehicleNumber: 1 });
 
     res.json({
       success: true,
@@ -39,7 +43,7 @@ exports.getDashboard = async (req, res, next) => {
         activeTrip,
         totalTrips,
         totalDistance: parseFloat(totalDistance.toFixed(2)),
-        assignedVehicle,
+        assignedVehicles,
       },
     });
   } catch (error) {
@@ -76,37 +80,76 @@ exports.startTrip = async (req, res, next) => {
     const driverId = req.user._id;
     const { routeId, vehicleId, startLocation } = req.body;
 
-    if (!routeId || !vehicleId) {
+    if (!routeId || !vehicleId || !startLocation) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide routeId and vehicleId',
+        message: 'Please provide routeId, vehicleId, and the device GPS startLocation',
       });
     }
 
-    // 1. Enforce rule: Only one active trip per vehicle
-    const activeVehicleTrip = await Trip.findOne({
-      vehicleId,
-      status: 'in-progress',
-    });
-
-    if (activeVehicleTrip) {
-      if (activeVehicleTrip.driverId.toString() !== driverId.toString()) {
-        return res.status(400).json({
-          success: false,
-          message: 'Vehicle is currently in use on another active trip by another driver.',
-        });
-      }
-      // Same driver: close previous active session for this vehicle
-      activeVehicleTrip.status = 'completed';
-      activeVehicleTrip.endTime = new Date();
-      await activeVehicleTrip.save();
+    if (!mongoose.isValidObjectId(routeId) || !mongoose.isValidObjectId(vehicleId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'routeId and vehicleId must be valid IDs',
+      });
+    }
+    if (!isValidCoordinates(startLocation.latitude, startLocation.longitude)) {
+      return res.status(400).json({
+        success: false,
+        message: 'A valid GPS start location is required to start a trip',
+      });
     }
 
-    // 2. Conclude any previous active trips for this driver
-    await Trip.updateMany(
-      { driverId, status: 'in-progress' },
-      { status: 'completed', endTime: new Date() }
-    );
+    const [route, vehicle, activeDriverTrip, activeVehicleTrip] = await Promise.all([
+      Route.findById(routeId),
+      Vehicle.findById(vehicleId),
+      Trip.findOne({ driverId, status: 'in-progress' }),
+      Trip.findOne({ vehicleId, status: 'in-progress' }),
+    ]);
+
+    if (!route || !route.active) {
+      return res.status(404).json({ success: false, message: 'Route not found or inactive' });
+    }
+
+    if (!vehicle || !vehicle.active) {
+      return res.status(404).json({ success: false, message: 'Vehicle not found or inactive' });
+    }
+
+    if (
+      req.user.role !== 'admin' &&
+      (!vehicle.assignedDriver || vehicle.assignedDriver.toString() !== driverId.toString())
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: 'This vehicle is assigned to another driver',
+      });
+    }
+
+    if (
+      req.user.role !== 'admin' &&
+      (!vehicle.assignedRoute || vehicle.assignedRoute.toString() !== routeId.toString())
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: 'This route is not assigned to the selected bus',
+      });
+    }
+
+    if (activeDriverTrip) {
+      return res.status(409).json({
+        success: false,
+        message: 'You already have an active trip',
+        tripId: activeDriverTrip._id,
+      });
+    }
+
+    if (activeVehicleTrip) {
+      return res.status(409).json({
+        success: false,
+        message: 'This vehicle already has an active trip',
+        tripId: activeVehicleTrip._id,
+      });
+    }
 
     const trip = await Trip.create({
       driverId,
@@ -114,10 +157,10 @@ exports.startTrip = async (req, res, next) => {
       routeId,
       startTime: new Date(),
       status: 'in-progress',
-      startLocation: startLocation || {
-        name: 'Terminal 1',
-        latitude: 37.7749,
-        longitude: -122.4194,
+      startLocation: {
+        name: typeof startLocation.name === 'string' ? startLocation.name.trim() : '',
+        latitude: Number(startLocation.latitude),
+        longitude: Number(startLocation.longitude),
       },
     });
 
@@ -129,7 +172,7 @@ exports.startTrip = async (req, res, next) => {
     // Broadcast trip started to all passengers via Socket.IO
     const io = req.app.get('io');
     if (io) {
-      io.emit('trip:started', {
+      io.to(`route:${routeId}`).emit('trip:started', {
         tripId: trip._id,
         vehicleId,
         routeId,
@@ -152,6 +195,16 @@ exports.startTrip = async (req, res, next) => {
 exports.endTrip = async (req, res, next) => {
   try {
     const { tripId, endLocation, distance, duration } = req.body;
+
+    if (!mongoose.isValidObjectId(tripId)) {
+      return res.status(400).json({ success: false, message: 'A valid tripId is required' });
+    }
+    if (distance != null && (!Number.isFinite(distance) || distance < 0)) {
+      return res.status(400).json({ success: false, message: 'distance must be a non-negative number' });
+    }
+    if (duration != null && (!Number.isFinite(duration) || duration < 0)) {
+      return res.status(400).json({ success: false, message: 'duration must be a non-negative number' });
+    }
 
     const trip = await Trip.findById(tripId);
     if (!trip) {
@@ -178,11 +231,24 @@ exports.endTrip = async (req, res, next) => {
 
     trip.status = 'completed';
     trip.endTime = new Date();
-    if (endLocation) trip.endLocation = endLocation;
+    if (endLocation) {
+      if (!isValidCoordinates(endLocation.latitude, endLocation.longitude)) {
+        return res.status(400).json({
+          success: false,
+          message: 'endLocation must contain valid GPS coordinates',
+        });
+      }
+      trip.endLocation = {
+        name: typeof endLocation.name === 'string' ? endLocation.name.trim() : null,
+        latitude: Number(endLocation.latitude),
+        longitude: Number(endLocation.longitude),
+      };
+    }
     if (distance != null) trip.distance = distance;
     if (duration != null) trip.duration = duration;
 
     await trip.save();
+    clearTripLocationCache(trip._id);
 
     // Broadcast trip completion to passengers via Socket.IO
     const io = req.app.get('io');
@@ -194,7 +260,6 @@ exports.endTrip = async (req, res, next) => {
         timestamp: new Date().toISOString(),
       };
       io.to(`trip:${tripId}`).emit('trip:completed', payload);
-      io.emit('trip:completed', payload);
     }
 
     res.json({
@@ -213,6 +278,23 @@ exports.endTrip = async (req, res, next) => {
 exports.updateTripStatus = async (req, res, next) => {
   try {
     const { tripId, status, liveStatus, stopName, eta } = req.body;
+    if (!mongoose.isValidObjectId(tripId)) {
+      return res.status(400).json({ success: false, message: 'A valid tripId is required' });
+    }
+    const requestedLiveStatus = liveStatus || status;
+    if (
+      typeof requestedLiveStatus !== 'string' ||
+      requestedLiveStatus.trim().length < 1 ||
+      requestedLiveStatus.trim().length > 100
+    ) {
+      return res.status(400).json({ success: false, message: 'A live status between 1 and 100 characters is required' });
+    }
+    if (!liveStatus && ['scheduled', 'in-progress', 'completed', 'cancelled'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Trip lifecycle status is managed by the start-trip and end-trip endpoints',
+      });
+    }
     const trip = await Trip.findById(tripId);
     if (!trip) {
       return res.status(404).json({ success: false, message: 'Trip not found' });
@@ -228,16 +310,13 @@ exports.updateTripStatus = async (req, res, next) => {
         message: 'You are not authorized to update this trip status',
       });
     }
+    if (trip.status !== 'in-progress') {
+      return res.status(409).json({ success: false, message: 'Only an active trip can receive live status updates' });
+    }
 
     // Assign human-readable liveStatus
-    const currentLiveStatus = liveStatus || status || 'On Route';
+    const currentLiveStatus = requestedLiveStatus.trim();
     trip.liveStatus = currentLiveStatus;
-
-    // Only update core lifecycle status if it is a valid enum value
-    const validStatuses = ['scheduled', 'in-progress', 'completed', 'cancelled'];
-    if (status && validStatuses.includes(status)) {
-      trip.status = status;
-    }
 
     await trip.save();
 
@@ -253,7 +332,6 @@ exports.updateTripStatus = async (req, res, next) => {
         timestamp: new Date().toISOString(),
       };
       io.to(`trip:${tripId}`).emit('trip:status', payload);
-      io.emit('trip:status', payload);
     }
 
     res.json({

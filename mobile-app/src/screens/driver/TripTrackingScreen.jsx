@@ -18,36 +18,34 @@ import {
   ClockIcon,
   NavigationIcon,
   RadioTowerIcon,
-  PinIcon,
-  CheckCircleIcon,
 } from '../../components/Icons';
 import { useAuth } from '../../context/AuthContext';
 import { locationService } from '../../services/locationService';
 import { socketService } from '../../services/socket';
-import { driverApi, locationApi } from '../../services/api';
+import { driverApi } from '../../services/api';
 
 export const TripTrackingScreen = ({ route, navigation }) => {
   const { user } = useAuth();
   const { tripId, tripData, route: assignedRoute, vehicle } = route.params || {};
 
-  const driverId = user?._id || user?.id || 'driver';
+  const driverId = user?._id || user?.id;
   const vehicleId = vehicle?._id || vehicle?.id;
   const routeId = assignedRoute?._id || assignedRoute?.id;
 
   const [currentLocation, setCurrentLocation] = useState(null);
-  const [durationSeconds, setDurationSeconds] = useState(0);
+  const [durationSeconds, setDurationSeconds] = useState(() => {
+    const startTime = new Date(tripData?.startTime).getTime();
+    return Number.isFinite(startTime) ? Math.max(0, Math.floor((Date.now() - startTime) / 1000)) : 0;
+  });
   const [distanceKm, setDistanceKm] = useState(0);
-  const [currentSpeed, setCurrentSpeed] = useState(0);
-  const [isGpsActive, setIsGpsActive] = useState(true);
+  const [currentSpeed, setCurrentSpeed] = useState(null);
+  const [isGpsActive, setIsGpsActive] = useState(false);
   const [gpsError, setGpsError] = useState(null);
   const [ending, setEnding] = useState(false);
   const [statusModalVisible, setStatusModalVisible] = useState(false);
-  const [currentTripStatus, setCurrentTripStatus] = useState('On Route');
-  const [isSimulating, setIsSimulating] = useState(false);
+  const [currentTripStatus, setCurrentTripStatus] = useState(tripData?.liveStatus || 'Status unavailable');
 
   const durationTimerRef = useRef(null);
-  const simulationIntervalRef = useRef(null);
-  const simulationStepRef = useRef(0);
 
   // Prevent accidental hardware back button on Android during active trip
   useEffect(() => {
@@ -74,19 +72,6 @@ export const TripTrackingScreen = ({ route, navigation }) => {
     };
   }, []);
 
-  // Bearing calculation between two geographic coordinates
-  const calculateBearing = (lat1, lon1, lat2, lon2) => {
-    const toRad = (deg) => (deg * Math.PI) / 180;
-    const toDeg = (rad) => (rad * 180) / Math.PI;
-    const dLon = toRad(lon2 - lon1);
-    const y = Math.sin(dLon) * Math.cos(toRad(lat2));
-    const x =
-      Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
-      Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon);
-    let brng = toDeg(Math.atan2(y, x));
-    return Math.round((brng + 360) % 360);
-  };
-
   // Connect GPS & Socket.IO telemetry
   useEffect(() => {
     // 1. Connect Socket.IO & register trip start
@@ -98,6 +83,8 @@ export const TripTrackingScreen = ({ route, navigation }) => {
         routeId,
       });
       socketService.subscribeTrip(tripId);
+    }).catch((error) => {
+      console.warn('Trip socket connection failed:', error.message);
     });
 
     // 2. Start hardware GPS tracking initially
@@ -116,7 +103,7 @@ export const TripTrackingScreen = ({ route, navigation }) => {
       driverId,
       (location) => {
         setCurrentLocation(location);
-        setCurrentSpeed(location.speed || 0);
+        setCurrentSpeed(Number.isFinite(location.speed) ? location.speed : null);
         setIsGpsActive(true);
         setGpsError(null);
 
@@ -128,12 +115,16 @@ export const TripTrackingScreen = ({ route, navigation }) => {
             driverId,
             latitude: location.latitude,
             longitude: location.longitude,
-            accuracy: location.accuracy || 10,
-            speed: location.speed || 0,
-            heading: location.heading || 0,
+            accuracy: location.accuracy,
+            speed: location.speed,
+            heading: location.heading,
             timestamp: location.timestamp,
           },
-          () => {}
+          (response) => {
+            if (response?.success === false) {
+              setGpsError(response.error || 'Server rejected the GPS update');
+            }
+          }
         );
 
         // Update local distance calculation
@@ -143,108 +134,13 @@ export const TripTrackingScreen = ({ route, navigation }) => {
       (error) => {
         setIsGpsActive(false);
         setGpsError(error?.message || 'GPS Signal Lost');
-      }
+      },
+      tripData?.startLocation
     );
   };
 
   const stopAllTracking = () => {
-    if (simulationIntervalRef.current) {
-      clearInterval(simulationIntervalRef.current);
-      simulationIntervalRef.current = null;
-    }
     locationService.stopLocationTracking();
-  };
-
-  // Demo Simulation Mode: smoothly interpolates bus movement along route waypoints
-  const toggleSimulation = () => {
-    if (isSimulating) {
-      // Deactivate simulation -> revert to real hardware GPS
-      if (simulationIntervalRef.current) {
-        clearInterval(simulationIntervalRef.current);
-        simulationIntervalRef.current = null;
-      }
-      setIsSimulating(false);
-      startHardwareGps();
-    } else {
-      // Activate simulation -> pause hardware GPS
-      locationService.stopLocationTracking();
-      setIsSimulating(true);
-      setIsGpsActive(true);
-      setGpsError(null);
-      startSimulation();
-    }
-  };
-
-  const startSimulation = () => {
-    const rawCoords = assignedRoute?.coordinates || [];
-    if (!rawCoords || rawCoords.length < 2) {
-      Alert.alert('Simulation Notice', 'Route coordinates unavailable for simulation.');
-      setIsSimulating(false);
-      startHardwareGps();
-      return;
-    }
-
-    // Interpolate points between coordinates for ultra-smooth presentation movement
-    const waypoints = [];
-    for (let i = 0; i < rawCoords.length - 1; i++) {
-      const p1 = rawCoords[i];
-      const p2 = rawCoords[i + 1];
-      const subdivisions = 4;
-      for (let s = 0; s < subdivisions; s++) {
-        const frac = s / subdivisions;
-        waypoints.push({
-          latitude: p1.latitude + (p2.latitude - p1.latitude) * frac,
-          longitude: p1.longitude + (p2.longitude - p1.longitude) * frac,
-        });
-      }
-    }
-    waypoints.push(rawCoords[rawCoords.length - 1]);
-
-    simulationIntervalRef.current = setInterval(() => {
-      let nextIdx = simulationStepRef.current + 1;
-      if (nextIdx >= waypoints.length) {
-        nextIdx = 0; // seamlessly loop for presentation
-      }
-      simulationStepRef.current = nextIdx;
-
-      const currPoint = waypoints[nextIdx];
-      const prevPoint = waypoints[nextIdx === 0 ? waypoints.length - 1 : nextIdx - 1];
-      const heading = calculateBearing(
-        prevPoint.latitude,
-        prevPoint.longitude,
-        currPoint.latitude,
-        currPoint.longitude
-      );
-
-      const simSpeed = 32; // 32 km/h
-      const incDist = 0.035; // ~35 meters per 2s tick
-      setDistanceKm((prev) => parseFloat((prev + incDist).toFixed(2)));
-      setCurrentSpeed(simSpeed);
-
-      const simLocation = {
-        latitude: currPoint.latitude,
-        longitude: currPoint.longitude,
-        accuracy: 4,
-        speed: simSpeed,
-        heading,
-        timestamp: new Date().toISOString(),
-      };
-
-      setCurrentLocation(simLocation);
-
-      // Transmit live coordinates over Socket.IO to passenger map radar
-      socketService.sendLocationUpdate({
-        tripId,
-        vehicleId,
-        driverId,
-        latitude: simLocation.latitude,
-        longitude: simLocation.longitude,
-        accuracy: 4,
-        speed: simSpeed,
-        heading,
-        timestamp: simLocation.timestamp,
-      });
-    }, 2000);
   };
 
   const formatDuration = (secs) => {
@@ -259,22 +155,15 @@ export const TripTrackingScreen = ({ route, navigation }) => {
   };
 
   const handleUpdateStatus = async (statusLabel) => {
-    setCurrentTripStatus(statusLabel);
-    setStatusModalVisible(false);
-
     try {
-      socketService.sendTripStatus({
-        tripId,
-        status: statusLabel,
-        timestamp: new Date().toISOString(),
-      });
-
       await driverApi.updateTripStatus({
         tripId,
         status: statusLabel,
       });
-    } catch (e) {
-      console.log('Status update error:', e);
+      setCurrentTripStatus(statusLabel);
+      setStatusModalVisible(false);
+    } catch (error) {
+      Alert.alert('Status Update Failed', error.response?.data?.message || 'Could not update the trip status.');
     }
   };
 
@@ -292,34 +181,30 @@ export const TripTrackingScreen = ({ route, navigation }) => {
   const executeEndTrip = async () => {
     setEnding(true);
     try {
-      // 1. Stop location tracking and simulation immediately
+      // Stop device location tracking immediately.
       stopAllTracking();
 
-      // 2. Send socket event
-      socketService.sendTripEnd({
-        tripId,
-        vehicleId,
-      });
-
-      // 3. Update backend database
+      // REST persists the lifecycle change and broadcasts it to the trip room.
       await driverApi.endTrip({
         tripId,
-        endLocation: {
-          name: assignedRoute?.destination || 'Destination Depot',
-          latitude: currentLocation?.latitude || assignedRoute?.coordinates?.[assignedRoute.coordinates.length - 1]?.latitude || 37.7749,
-          longitude: currentLocation?.longitude || assignedRoute?.coordinates?.[assignedRoute.coordinates.length - 1]?.longitude || -122.4194,
-        },
-        distance: distanceKm,
+        endLocation: currentLocation
+          ? {
+              name: 'Last device GPS',
+              latitude: currentLocation.latitude,
+              longitude: currentLocation.longitude,
+            }
+          : undefined,
+        distance: locationService.getLocationHistory().length ? distanceKm : undefined,
         duration: durationSeconds,
       });
 
-      // 4. Navigate to Trip Completed screen
+      // Navigate to the trip summary with measured trip values.
       navigation.replace('EndTrip', {
         tripDetails: {
           tripId,
-          routeName: assignedRoute?.routeName || 'Transit Route',
-          routeNumber: assignedRoute?.routeNumber || 'R-1',
-          vehicleNumber: vehicle?.vehicleNumber || 'Transit Bus',
+          routeName: assignedRoute?.routeName,
+          routeNumber: assignedRoute?.routeNumber,
+          vehicleNumber: vehicle?.vehicleNumber,
           duration: formatDuration(durationSeconds),
           distance: `${distanceKm.toFixed(2)} km`,
           endTime: new Date().toLocaleTimeString(),
@@ -336,9 +221,9 @@ export const TripTrackingScreen = ({ route, navigation }) => {
     <View style={styles.container}>
       {/* Top Header */}
       <Header
-        title={assignedRoute?.routeName || 'Active Trip'}
-        subtitle={`Bus #${vehicle?.vehicleNumber || 'Transit Bus'} • ${currentTripStatus}`}
-        rightAction={<LiveBadge label="TRANSMITTING" size="sm" />}
+        title={assignedRoute?.routeName || 'Route unavailable'}
+        subtitle={`Bus #${vehicle?.vehicleNumber || 'Registration unavailable'} • ${currentTripStatus}`}
+        rightAction={<LiveBadge label={isGpsActive ? 'GPS ACTIVE' : 'GPS OFF'} size="sm" />}
       />
 
       {/* Interactive Map View */}
@@ -346,6 +231,7 @@ export const TripTrackingScreen = ({ route, navigation }) => {
         <MapContainer
           busLocation={currentLocation}
           routeCoordinates={assignedRoute?.coordinates || []}
+          routeCoordinatesVerified={assignedRoute?.coordinatesVerified === true}
           stops={assignedRoute?.stops || []}
           startingPoint={assignedRoute?.startingPoint}
           destination={assignedRoute?.destination}
@@ -356,22 +242,15 @@ export const TripTrackingScreen = ({ route, navigation }) => {
 
         {/* GPS Indicator Overlay */}
         <View style={styles.gpsIndicatorOverlay}>
-          <RadioTowerIcon size={16} color={isSimulating ? COLORS.success : isGpsActive ? COLORS.success : COLORS.danger} />
+          <RadioTowerIcon size={16} color={isGpsActive ? COLORS.success : COLORS.danger} />
           <Text style={styles.gpsIndicatorText}>
-            {isSimulating ? 'Demo GPS: 32 km/h' : isGpsActive ? `GPS Lock (±${Math.round(currentLocation?.accuracy || 8)}m)` : gpsError || 'Acquiring GPS Signal...'}
+            {isGpsActive
+              ? currentLocation?.accuracy
+                ? `GPS lock (±${Math.round(currentLocation.accuracy)}m)`
+                : 'GPS lock'
+              : gpsError || 'Waiting for device GPS'}
           </Text>
         </View>
-
-        {/* Presentation Simulation Mode Toggle */}
-        <TouchableOpacity
-          style={[styles.simFab, isSimulating && styles.simFabActive]}
-          activeOpacity={0.85}
-          onPress={toggleSimulation}
-        >
-          <Text style={[styles.simFabText, isSimulating && styles.simFabTextActive]}>
-            {isSimulating ? '⚡ SIMULATING' : '▶ DEMO: SIMULATE BUS'}
-          </Text>
-        </TouchableOpacity>
 
         {/* Change Trip Status Button */}
         <TouchableOpacity
@@ -387,14 +266,14 @@ export const TripTrackingScreen = ({ route, navigation }) => {
       <View style={[styles.telemetryPanel, SHADOWS.lg]}>
         <View style={styles.routeHeaderRow}>
           <View style={styles.routeInfoCol}>
-            <Text style={styles.routeNumberTag}>{assignedRoute?.routeNumber || 'ROUTE'}</Text>
+            <Text style={styles.routeNumberTag}>{assignedRoute?.routeNumber || 'Route unavailable'}</Text>
             <Text style={styles.destText} numberOfLines={1}>
-              Heading towards: {assignedRoute?.destination || 'Terminal'}
+              Heading towards: {assignedRoute?.destination || 'Destination unavailable'}
             </Text>
           </View>
           <View style={styles.livePill}>
             <View style={styles.liveDot} />
-            <Text style={styles.livePillText}>LIVE GPS</Text>
+            <Text style={styles.livePillText}>{isGpsActive ? 'GPS ACTIVE' : 'GPS OFF'}</Text>
           </View>
         </View>
 
@@ -419,7 +298,9 @@ export const TripTrackingScreen = ({ route, navigation }) => {
           <View style={styles.metricItem}>
             <SpeedIcon size={20} color={COLORS.primary} />
             <Text style={styles.metricLabel}>Speed</Text>
-            <Text style={styles.metricValue}>{Math.round(currentSpeed)} km/h</Text>
+            <Text style={styles.metricValue}>
+              {currentSpeed == null ? 'Unavailable' : `${Math.round(currentSpeed)} km/h`}
+            </Text>
           </View>
         </View>
 
@@ -491,34 +372,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     marginLeft: 6,
-  },
-  simFab: {
-    position: 'absolute',
-    top: 50,
-    left: 14,
-    backgroundColor: '#0F172A',
-    borderRadius: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: '#38BDF8',
-    elevation: 4,
-  },
-  simFabActive: {
-    backgroundColor: COLORS.success,
-    borderColor: '#86EFAC',
-  },
-  simFabText: {
-    color: '#38BDF8',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.4,
-  },
-  simFabTextActive: {
-    color: '#FFFFFF',
-    fontWeight: '900',
   },
   statusFab: {
     position: 'absolute',

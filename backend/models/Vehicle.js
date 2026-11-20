@@ -9,20 +9,33 @@ const vehicleSchema = new mongoose.Schema(
       trim: true,
       uppercase: true,
     },
+    vehicleName: {
+      type: String,
+      trim: true,
+      default: '',
+    },
     vehicleType: {
       type: String,
       enum: ['Standard Transit Bus', 'Articulated Bus', 'Electric Shuttle', 'Double Decker Bus'],
-      default: 'Standard Transit Bus',
     },
     capacity: {
       type: Number,
       required: [true, 'Please provide passenger capacity'],
-      default: 45,
     },
     assignedDriver: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       default: null,
+    },
+    assignedRoute: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Route',
+      default: null,
+    },
+    currentLocation: {
+      latitude: { type: Number, default: null },
+      longitude: { type: Number, default: null },
+      timestamp: { type: Date, default: null },
     },
     active: {
       type: Boolean,

@@ -13,8 +13,6 @@ import { Header } from '../../components/Header';
 import { CustomInput } from '../../components/CustomInput';
 import {
   SearchIcon,
-  RouteIcon,
-  PinIcon,
   ChevronRightIcon,
   HeartIcon,
 } from '../../components/Icons';
@@ -22,7 +20,7 @@ import { routeApi } from '../../services/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export const RoutesScreen = ({ navigation, route: navRoute }) => {
-  const initialFilter = navRoute?.params?.filter || 'all';
+  const initialFilter = navRoute?.params?.filter === 'favorites' ? 'favorites' : 'all';
   const initialSearch = navRoute?.params?.searchQuery || '';
   const [activeFilter, setActiveFilter] = useState(initialFilter);
   const [searchQuery, setSearchQuery] = useState(initialSearch);
@@ -30,6 +28,7 @@ export const RoutesScreen = ({ navigation, route: navRoute }) => {
   const [favorites, setFavorites] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
     if (navRoute?.params?.searchQuery != null) {
@@ -42,7 +41,7 @@ export const RoutesScreen = ({ navigation, route: navRoute }) => {
       .then((favs) => {
         if (favs) setFavorites(JSON.parse(favs));
       })
-      .catch(() => {});
+      .catch((error) => console.warn('Favorite routes could not be loaded:', error.message));
   }, []);
 
   const fetchRoutes = async () => {
@@ -50,9 +49,14 @@ export const RoutesScreen = ({ navigation, route: navRoute }) => {
       const res = await routeApi.getAllRoutes();
       if (res.data?.data) {
         setRoutes(res.data.data);
+        setLoadError('');
+      } else {
+        setRoutes([]);
+        setLoadError('Route data is unavailable. Refresh to try again.');
       }
     } catch (err) {
-      console.log('Error fetching transit routes:', err.message);
+      setRoutes([]);
+      setLoadError(err.response?.data?.message || 'Route data is unavailable. Check your connection and refresh.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -68,7 +72,9 @@ export const RoutesScreen = ({ navigation, route: navRoute }) => {
       const updated = prev.includes(id)
         ? prev.filter((item) => item !== id)
         : [...prev, id];
-      AsyncStorage.setItem('@favorite_routes', JSON.stringify(updated)).catch(() => {});
+      AsyncStorage.setItem('@favorite_routes', JSON.stringify(updated)).catch((error) => {
+        console.warn('Favorite route could not be saved:', error.message);
+      });
       return updated;
     });
   };
@@ -82,7 +88,6 @@ export const RoutesScreen = ({ navigation, route: navRoute }) => {
 
     if (!matchesSearch) return false;
     if (activeFilter === 'favorites') return favorites.includes(item._id);
-    if (activeFilter === 'nearby') return true; // nearby priority
     return true;
   });
 
@@ -183,20 +188,6 @@ export const RoutesScreen = ({ navigation, route: navRoute }) => {
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.filterPill, activeFilter === 'nearby' && styles.filterPillActive]}
-            onPress={() => setActiveFilter('nearby')}
-          >
-            <Text
-              style={[
-                styles.filterPillText,
-                activeFilter === 'nearby' && styles.filterPillTextActive,
-              ]}
-            >
-              Nearby Corridors
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
             style={[styles.filterPill, activeFilter === 'favorites' && styles.filterPillActive]}
             onPress={() => setActiveFilter('favorites')}
           >
@@ -220,7 +211,7 @@ export const RoutesScreen = ({ navigation, route: navRoute }) => {
       ) : (
         <FlatList
           data={filteredRoutes}
-          keyExtractor={(item) => item._id || Math.random().toString()}
+          keyExtractor={(item) => String(item._id)}
           renderItem={renderRouteCard}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
@@ -235,9 +226,13 @@ export const RoutesScreen = ({ navigation, route: navRoute }) => {
           }
           ListEmptyComponent={
             <View style={styles.emptyBox}>
-              <Text style={styles.emptyTitle}>No matching routes found</Text>
+              <Text style={styles.emptyTitle}>
+                {loadError ? 'Route data unavailable' : routes.length ? 'No matching routes found' : 'No routes are currently registered'}
+              </Text>
               <Text style={styles.emptySubtitle}>
-                Try adjusting your search criteria or switch filter tabs above.
+                {loadError || (routes.length
+                  ? 'Try adjusting your search or selecting another filter.'
+                  : 'Registered routes will appear here when available.')}
               </Text>
             </View>
           }

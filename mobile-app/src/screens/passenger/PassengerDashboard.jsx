@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   StyleSheet,
   RefreshControl,
-  Alert,
 } from 'react-native';
 import { COLORS, SHADOWS } from '../../utils/theme';
 import { Header } from '../../components/Header';
@@ -15,26 +14,22 @@ import {
   SearchIcon,
   BusIcon,
   RouteIcon,
-  HeartIcon,
   HistoryIcon,
   ChevronRightIcon,
-  PinIcon,
   RadioTowerIcon,
   UserIcon,
 } from '../../components/Icons';
 import { LiveBadge } from '../../components/LiveBadge';
 import { useAuth } from '../../context/AuthContext';
 import { passengerApi } from '../../services/api';
+import { locationService } from '../../services/locationService';
 
 export const PassengerDashboard = ({ navigation }) => {
   const { user } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(false);
-  const [activeVehicles, setActiveVehicles] = useState([]);
-  const [favoriteRoutes, setFavoriteRoutes] = useState([
-    { id: '1', number: 'R-101', name: 'North-South Metro Express' },
-    { id: '2', number: 'R-202', name: 'Uptown Circular Line' },
-  ]);
+  const [activeVehicles, setActiveVehicles] = useState(null);
+  const [passengerLocation, setPassengerLocation] = useState(null);
 
   const fetchActiveVehicles = async () => {
     setLoading(true);
@@ -42,9 +37,12 @@ export const PassengerDashboard = ({ navigation }) => {
       const res = await passengerApi.getActiveVehicles();
       if (res.data?.data) {
         setActiveVehicles(res.data.data);
+      } else {
+        setActiveVehicles(null);
       }
     } catch (err) {
-      console.log('Error fetching active vehicles:', err.message);
+      setActiveVehicles(null);
+      console.warn('Active trip data unavailable:', err.message);
     } finally {
       setLoading(false);
     }
@@ -56,15 +54,30 @@ export const PassengerDashboard = ({ navigation }) => {
     return unsubscribe;
   }, [navigation]);
 
+  useEffect(() => {
+    let active = true;
+    const detectLocation = async () => {
+      try {
+        const permitted = await locationService.requestLocationPermissions();
+        if (!permitted) return;
+        const location = await locationService.getCurrentPosition();
+        if (!active) return;
+        setPassengerLocation(location);
+      } catch (error) {
+        console.log('Passenger location unavailable:', error.message);
+      }
+    };
+    detectLocation();
+    return () => {
+      active = false;
+    };
+  }, []);
+
   return (
     <View style={styles.container}>
       <Header
         title={`Hello, ${user?.name?.split(' ')[0] || 'Passenger'} 👋`}
         subtitle="Where are you travelling today?"
-        hasNotification
-        onNotificationPress={() =>
-          Alert.alert('Transit Alert', 'All main lines operating smoothly. Normal service.')
-        }
         rightAction={
           <TouchableOpacity
             style={styles.profileAvatarBtn}
@@ -109,6 +122,25 @@ export const PassengerDashboard = ({ navigation }) => {
 
         {/* Live Tracking Card (Highlight) */}
         <TouchableOpacity
+          style={[styles.findBusCard, SHADOWS.sm]}
+          activeOpacity={0.88}
+          onPress={() => navigation.navigate('PassengerBusSearch', { passengerLocation })}
+        >
+          <View style={styles.findBusHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.findBusTitle}>Find Buses to Your Destination</Text>
+              <Text style={styles.findBusSubtitle}>
+                {passengerLocation
+                  ? `Using your location · ${passengerLocation.latitude.toFixed(3)}, ${passengerLocation.longitude.toFixed(3)}`
+                  : 'Detect your location or choose a starting stop'}
+              </Text>
+            </View>
+            <ChevronRightIcon size={20} color="#FFFFFF" />
+          </View>
+          <Text style={styles.findBusAction}>SEARCH ACTIVE BUSES</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
           style={[styles.highlightCard, SHADOWS.md]}
           activeOpacity={0.88}
           onPress={() => navigation.navigate('LiveTracking')}
@@ -118,11 +150,11 @@ export const PassengerDashboard = ({ navigation }) => {
               <RadioTowerIcon size={16} color="#FFFFFF" />
               <Text style={styles.highlightBadgeText}>REAL-TIME RADAR</Text>
             </View>
-            <LiveBadge label="ACTIVE" size="sm" />
+            <LiveBadge label="LIVE MAP" size="sm" />
           </View>
           <Text style={styles.highlightTitle}>Live Bus Tracking</Text>
           <Text style={styles.highlightDesc}>
-            View live moving buses, stop estimates and real-time GPS locations on Google Maps.
+          View buses with active driver GPS and their latest reported positions.
           </Text>
           <View style={styles.highlightFooter}>
             <Text style={styles.highlightLink}>Open Map Radar</Text>
@@ -156,25 +188,14 @@ export const PassengerDashboard = ({ navigation }) => {
               <BusIcon size={24} color={COLORS.success} />
             </View>
             <Text style={styles.serviceTitle}>Live Vehicles</Text>
-            <Text style={styles.serviceDesc}>{activeVehicles.length || 2} buses on route</Text>
+            <Text style={styles.serviceDesc}>
+              {activeVehicles == null ? 'Active trip data unavailable' : `${activeVehicles.length} active trips`}
+            </Text>
           </TouchableOpacity>
         </View>
 
         <View style={styles.gridRow}>
-          {/* Favorites Card */}
-          <TouchableOpacity
-            style={[styles.serviceCard, SHADOWS.sm]}
-            activeOpacity={0.8}
-            onPress={() => navigation.navigate('Routes', { filter: 'favorites' })}
-          >
-            <View style={[styles.cardIconBox, { backgroundColor: '#FEE2E2' }]}>
-              <HeartIcon size={24} color={COLORS.danger} filled />
-            </View>
-            <Text style={styles.serviceTitle}>Favorites</Text>
-            <Text style={styles.serviceDesc}>Saved lines & quick access</Text>
-          </TouchableOpacity>
-
-          {/* Trip History / Updates Card */}
+          {/* Trip Updates Card */}
           <TouchableOpacity
             style={[styles.serviceCard, SHADOWS.sm]}
             activeOpacity={0.8}
@@ -183,36 +204,10 @@ export const PassengerDashboard = ({ navigation }) => {
             <View style={[styles.cardIconBox, { backgroundColor: '#FEF3C7' }]}>
               <HistoryIcon size={24} color={COLORS.warning} />
             </View>
-            <Text style={styles.serviceTitle}>Timeline Updates</Text>
-            <Text style={styles.serviceDesc}>Arrival countdowns & stop logs</Text>
+            <Text style={styles.serviceTitle}>Trip Updates</Text>
+            <Text style={styles.serviceDesc}>Live status and ordered route stops</Text>
           </TouchableOpacity>
         </View>
-
-        {/* Favorite Corridors Section */}
-        <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionTitle}>Favorite Corridors</Text>
-          <TouchableOpacity onPress={() => navigation.navigate('Routes')}>
-            <Text style={styles.viewAllText}>View All</Text>
-          </TouchableOpacity>
-        </View>
-
-        {favoriteRoutes.map((route) => (
-          <TouchableOpacity
-            key={route.id}
-            style={[styles.favRow, SHADOWS.sm]}
-            activeOpacity={0.8}
-            onPress={() => navigation.navigate('LiveTracking', { routeNumber: route.number })}
-          >
-            <View style={styles.favBadge}>
-              <Text style={styles.favBadgeText}>{route.number}</Text>
-            </View>
-            <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={styles.favName}>{route.name}</Text>
-              <Text style={styles.favStatus}>Live tracking available</Text>
-            </View>
-            <ChevronRightIcon size={20} color={COLORS.textSecondary} />
-          </TouchableOpacity>
-        ))}
       </ScrollView>
     </View>
   );
@@ -246,6 +241,33 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     padding: 20,
     marginBottom: 24,
+  },
+  findBusCard: {
+    backgroundColor: '#0F4C9A',
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 16,
+  },
+  findBusHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  findBusTitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  findBusSubtitle: {
+    color: '#DBEAFE',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  findBusAction: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.6,
+    marginTop: 12,
   },
   highlightHeader: {
     flexDirection: 'row',
@@ -296,18 +318,6 @@ const styles = StyleSheet.create({
     color: COLORS.textPrimary,
     marginBottom: 12,
   },
-  sectionHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 10,
-    marginBottom: 12,
-  },
-  viewAllText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: COLORS.primary,
-  },
   gridRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -340,37 +350,5 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     marginTop: 2,
     lineHeight: 16,
-  },
-  favRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: COLORS.cardBorder,
-    marginBottom: 10,
-  },
-  favBadge: {
-    backgroundColor: '#E8F1FD',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  favBadgeText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: COLORS.primary,
-  },
-  favName: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: COLORS.textPrimary,
-  },
-  favStatus: {
-    fontSize: 12,
-    color: COLORS.success,
-    fontWeight: '600',
-    marginTop: 2,
   },
 });

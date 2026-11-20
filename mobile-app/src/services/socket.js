@@ -14,7 +14,10 @@ class SocketService {
    * Initializes Socket.IO connection with reconnection policies and JWT token auth
    */
   async connect() {
-    if (this.socket && this.connected) {
+    if (this.socket) {
+      if (!this.socket.connected) {
+        this.socket.connect();
+      }
       return this.socket;
     }
 
@@ -37,10 +40,9 @@ class SocketService {
       this.connected = true;
       console.log('[Socket.IO] Connected. Socket ID:', this.socket.id);
 
-      // Re-subscribe to any active trip room upon reconnection
-      if (this.currentTripId) {
-        this.subscribeTrip(this.currentTripId);
-      }
+      this.activeSubscriptions.forEach((tripId) => {
+        this.socket.emit('trip:subscribe', { tripId });
+      });
     });
 
     this.socket.on('disconnect', (reason) => {
@@ -141,7 +143,7 @@ class SocketService {
     if (!tripId) return;
     this.activeSubscriptions.delete(tripId);
     if (this.currentTripId === tripId) {
-      this.currentTripId = null;
+      this.currentTripId = this.activeSubscriptions.values().next().value || null;
     }
 
     if (this.socket && this.connected) {

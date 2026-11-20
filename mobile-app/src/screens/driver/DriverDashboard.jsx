@@ -18,7 +18,6 @@ import {
   HistoryIcon,
   UserIcon,
   ChevronRightIcon,
-  ClockIcon,
   RadioTowerIcon,
   CheckCircleIcon,
 } from '../../components/Icons';
@@ -28,12 +27,8 @@ import { driverApi } from '../../services/api';
 export const DriverDashboard = ({ navigation }) => {
   const { user, logout } = useAuth();
   const [loading, setLoading] = useState(false);
-  const [dashboardData, setDashboardData] = useState({
-    activeTrip: null,
-    totalTrips: 0,
-    totalDistance: 0,
-    assignedVehicle: null,
-  });
+  const [dashboardData, setDashboardData] = useState(null);
+  const [dashboardError, setDashboardError] = useState('');
 
   const fetchDashboard = async () => {
     setLoading(true);
@@ -41,10 +36,12 @@ export const DriverDashboard = ({ navigation }) => {
       const res = await driverApi.getDashboard();
       if (res.data?.success) {
         setDashboardData(res.data.data);
+        setDashboardError('');
+      } else {
+        setDashboardError('Driver data is unavailable. Refresh to try again.');
       }
     } catch (err) {
-      // Graceful fallback if offline or initial setup
-      console.log('Driver dashboard fetch info:', err.message);
+      setDashboardError(err.response?.data?.message || 'Driver data is unavailable. Check your connection and refresh.');
     } finally {
       setLoading(false);
     }
@@ -60,11 +57,7 @@ export const DriverDashboard = ({ navigation }) => {
     <View style={styles.container}>
       <Header
         title="Driver Dashboard"
-        subtitle="Transit Management Unit"
-        hasNotification
-        onNotificationPress={() =>
-          Alert.alert('Notifications', 'Dispatch: All routes operational. Weather conditions optimal.')
-        }
+        subtitle="Manage your buses and active trips"
       />
 
       <ScrollView
@@ -72,6 +65,7 @@ export const DriverDashboard = ({ navigation }) => {
         refreshControl={<RefreshControl refreshing={loading} onRefresh={fetchDashboard} />}
         showsVerticalScrollIndicator={false}
       >
+        {dashboardError ? <Text style={styles.dataError}>{dashboardError}</Text> : null}
         {/* Driver Profile Card */}
         <View style={[styles.profileCard, SHADOWS.sm]}>
           <View style={styles.avatarCircle}>
@@ -79,18 +73,20 @@ export const DriverDashboard = ({ navigation }) => {
           </View>
           <View style={styles.profileText}>
             <Text style={styles.welcomeText}>Welcome back,</Text>
-            <Text style={styles.driverName}>{user?.name || 'Senior Driver'}</Text>
+            <Text style={styles.driverName}>{user?.name || 'Driver'}</Text>
             <View style={styles.statusRow}>
               <View style={styles.statusDot} />
               <Text style={styles.statusLabel}>
-                {dashboardData.activeTrip ? 'On Active Duty (Trip Running)' : 'Ready for Dispatch'}
+                {!dashboardData
+                  ? loading ? 'Checking trip status…' : 'Trip status unavailable'
+                  : dashboardData.activeTrip ? 'On Active Duty (Trip Running)' : 'Ready for Dispatch'}
               </Text>
             </View>
           </View>
         </View>
 
         {/* Active Trip Banner if currently running */}
-        {dashboardData.activeTrip && (
+        {dashboardData?.activeTrip && (
           <TouchableOpacity
             activeOpacity={0.9}
             style={[styles.activeTripBanner, SHADOWS.md]}
@@ -110,10 +106,10 @@ export const DriverDashboard = ({ navigation }) => {
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={styles.bannerTag}>ACTIVE TRIP IN PROGRESS</Text>
                 <Text style={styles.bannerRoute}>
-                  {dashboardData.activeTrip.routeId?.routeName || 'Current Route'}
+                  {dashboardData.activeTrip.routeId?.routeName || 'Route unavailable'}
                 </Text>
                 <Text style={styles.bannerVehicle}>
-                  Bus #{dashboardData.activeTrip.vehicleId?.vehicleNumber || 'Transit Bus'}
+                  Bus #{dashboardData.activeTrip.vehicleId?.vehicleNumber || 'Registration unavailable'}
                 </Text>
               </View>
               <ChevronRightIcon size={24} color="#FFFFFF" />
@@ -163,26 +159,55 @@ export const DriverDashboard = ({ navigation }) => {
           </TouchableOpacity>
         </View>
 
-        {/* Route Information Card */}
+        <View style={styles.actionsGrid}>
+          <TouchableOpacity
+            style={[styles.actionCard, SHADOWS.sm]}
+            activeOpacity={0.8}
+            onPress={() => navigation.navigate('DriverVehicles')}
+          >
+            <View style={[styles.cardIconBox, { backgroundColor: '#F1F5F9' }]}>
+              <BusIcon size={26} color={COLORS.primary} />
+            </View>
+            <Text style={styles.actionCardTitle}>My Buses</Text>
+            <Text style={styles.actionCardDesc}>View your registered buses and configured routes.</Text>
+            <View style={styles.cardFooter}>
+              <Text style={[styles.cardFooterLink, { color: COLORS.textSecondary }]}>View Fleet</Text>
+              <ChevronRightIcon size={16} color={COLORS.textSecondary} />
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.actionCard, SHADOWS.sm]}
+            activeOpacity={0.8}
+            onPress={() => navigation.navigate('AddBus')}
+          >
+            <View style={[styles.cardIconBox, { backgroundColor: '#DCFCE7' }]}>
+              <RouteIcon size={26} color={COLORS.success} />
+            </View>
+            <Text style={styles.actionCardTitle}>Register a Bus</Text>
+            <Text style={styles.actionCardDesc}>Add a bus and select its ordered route stops.</Text>
+            <View style={styles.cardFooter}>
+              <Text style={styles.cardFooterLink}>Add Bus</Text>
+              <ChevronRightIcon size={16} color={COLORS.primary} />
+            </View>
+          </TouchableOpacity>
+        </View>
+
+        {/* Configured fleet summary */}
         <View style={styles.fullWidthCardWrapper}>
           <TouchableOpacity
             style={[styles.infoCard, SHADOWS.sm]}
             activeOpacity={0.8}
-            onPress={() =>
-              Alert.alert(
-                'Route Information',
-                'Assigned Routes: North-South Metro Express (R101), Uptown Circular Line (R202), Airport Express Corridor (R303).'
-              )
-            }
+            onPress={() => navigation.navigate('DriverVehicles')}
           >
             <View style={styles.infoCardContent}>
               <View style={[styles.cardIconBox, { backgroundColor: '#DCFCE7' }]}>
                 <RouteIcon size={26} color={COLORS.success} />
               </View>
               <View style={{ flex: 1, marginLeft: 14 }}>
-                <Text style={styles.infoCardTitle}>Assigned Route Network</Text>
+                <Text style={styles.infoCardTitle}>Your Registered Fleet</Text>
                 <Text style={styles.infoCardDesc}>
-                  3 official corridors active. Check designated stops and timetable.
+                  {dashboardData ? `${dashboardData.assignedVehicles?.length ?? 0} registered bus${dashboardData.assignedVehicles?.length === 1 ? '' : 'es'}` : 'Fleet data unavailable'}
                 </Text>
               </View>
               <ChevronRightIcon size={20} color={COLORS.textSecondary} />
@@ -191,18 +216,22 @@ export const DriverDashboard = ({ navigation }) => {
         </View>
 
         {/* Key Metrics / Profile Summary */}
-        <Text style={styles.sectionHeader}>Performance & Shift Stats</Text>
+        <Text style={styles.sectionHeader}>Completed Trip Stats</Text>
         <View style={styles.statsRow}>
           <StatCard
             icon={<CheckCircleIcon size={22} color={COLORS.success} />}
             label="Total Trips"
-            value={dashboardData.totalTrips || '18'}
+            value={dashboardData ? dashboardData.totalTrips : '—'}
             color={COLORS.success}
           />
           <StatCard
             icon={<NavigationIcon size={22} color={COLORS.primary} />}
             label="Distance"
-            value={`${dashboardData.totalDistance || '142.5'} km`}
+            value={
+              dashboardData?.totalDistance == null
+                ? 'Unavailable'
+                : `${Number(dashboardData.totalDistance).toFixed(1)} km`
+            }
             color={COLORS.primary}
           />
         </View>
@@ -413,5 +442,11 @@ const styles = StyleSheet.create({
     color: COLORS.danger,
     fontSize: 14,
     fontWeight: '700',
+  },
+  dataError: {
+    color: COLORS.danger,
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 12,
   },
 });

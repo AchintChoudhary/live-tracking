@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { COLORS } from '../utils/theme';
 import { BusIcon, PinIcon, NavigationIcon } from './Icons';
@@ -13,12 +13,15 @@ import { BusIcon, PinIcon, NavigationIcon } from './Icons';
 export const MapContainer = ({
   initialRegion,
   busLocation,
+  userLocation,
   vehicles = [],
   routeCoordinates = [],
+  routeCoordinatesVerified = false,
   stops = [],
   startingPoint,
   destination,
   selectedStop,
+  destinationStop,
   onStopSelect,
   selectedVehicleId,
   onVehicleSelect,
@@ -30,21 +33,23 @@ export const MapContainer = ({
 }) => {
   const mapRef = useRef(null);
   const [mapReady, setMapReady] = useState(false);
-  const [mapError, setMapError] = useState(null);
 
   // Derive target vehicle coordinate for centering
   const activeTargetLoc =
     busLocation ||
     vehicles.find((v) => v.vehicleId === selectedVehicleId || v.tripId === selectedVehicleId) ||
     vehicles[0] ||
+    userLocation ||
     (routeCoordinates[0] ? { latitude: routeCoordinates[0].latitude, longitude: routeCoordinates[0].longitude } : null);
 
-  const defaultRegion = {
-    latitude: activeTargetLoc?.latitude || 37.7749,
-    longitude: activeTargetLoc?.longitude || -122.4194,
-    latitudeDelta: 0.04,
-    longitudeDelta: 0.04,
-  };
+  const defaultRegion = activeTargetLoc
+    ? {
+        latitude: activeTargetLoc.latitude,
+        longitude: activeTargetLoc.longitude,
+        latitudeDelta: 0.04,
+        longitudeDelta: 0.04,
+      }
+    : undefined;
 
   const hasInitiallyCentered = useRef(false);
 
@@ -86,13 +91,15 @@ export const MapContainer = ({
   }
 
   const originCoord = routeCoordinates[0] || (stops[0] ? { latitude: stops[0].latitude, longitude: stops[0].longitude } : null);
-  const destCoord =
+  const destCoord = destinationStop
+    ? { latitude: destinationStop.latitude, longitude: destinationStop.longitude }
+    :
     routeCoordinates[routeCoordinates.length - 1] ||
     (stops.length > 1 ? { latitude: stops[stops.length - 1].latitude, longitude: stops[stops.length - 1].longitude } : null);
 
   return (
     <View style={[styles.container, style]}>
-      <MapView
+      {(initialRegion || defaultRegion) ? <MapView
         ref={mapRef}
         provider={PROVIDER_GOOGLE}
         style={StyleSheet.absoluteFillObject}
@@ -117,7 +124,7 @@ export const MapContainer = ({
         {originCoord && (
           <Marker
             coordinate={{ latitude: originCoord.latitude, longitude: originCoord.longitude }}
-            title={`Origin: ${startingPoint || 'Start Terminal'}`}
+            title={`Origin: ${startingPoint || 'Start stop'}`}
             description="Route departure station"
             anchor={{ x: 0.5, y: 1 }}
           >
@@ -131,8 +138,8 @@ export const MapContainer = ({
         {destCoord && (
           <Marker
             coordinate={{ latitude: destCoord.latitude, longitude: destCoord.longitude }}
-            title={`Destination: ${destination || 'End Terminal'}`}
-            description="Route terminal arrival"
+            title={`Destination: ${destinationStop?.name || destination || 'Route destination'}`}
+            description={destinationStop ? 'Selected passenger destination stop' : 'Route terminal arrival'}
             anchor={{ x: 0.5, y: 1 }}
           >
             <View style={styles.destMarker}>
@@ -141,9 +148,21 @@ export const MapContainer = ({
           </Marker>
         )}
 
+        {userLocation && (
+          <Marker
+            coordinate={{ latitude: userLocation.latitude, longitude: userLocation.longitude }}
+            title="Passenger location"
+            description="Your current or selected starting point"
+          >
+            <View style={styles.userMarker}>
+              <View style={styles.userMarkerInner} />
+            </View>
+          </Marker>
+        )}
+
         {/* Bus Stops Markers */}
         {stops.map((stop, index) => {
-          const isSelected = selectedStop && selectedStop.name === stop.name;
+          const isSelected = selectedStop && String(selectedStop._id) === String(stop._id);
           return (
             <Marker
               key={`stop-${stop.name}-${index}`}
@@ -174,8 +193,8 @@ export const MapContainer = ({
                 latitude: veh.latitude,
                 longitude: veh.longitude,
               }}
-              title={veh.vehicleNumber || 'Transit Bus'}
-              description={`Speed: ${Math.round(veh.speed || 0)} km/h • Heading: ${veh.heading || 0}°`}
+              title={veh.busName || veh.vehicleNumber || 'Bus'}
+              description={`${veh.vehicleNumber || 'Registration unavailable'}${Number.isFinite(veh.etaMinutes) ? ` • ETA ${veh.etaMinutes} min` : ''} • Speed: ${Number.isFinite(veh.speed) ? `${Math.round(veh.speed)} km/h` : 'Unavailable'} • Heading: ${Number.isFinite(veh.heading) ? `${Math.round(veh.heading)}°` : 'Unavailable'}`}
               anchor={{ x: 0.5, y: 0.5 }}
               onPress={() => onVehicleSelect && onVehicleSelect(veh)}
             >
@@ -186,14 +205,24 @@ export const MapContainer = ({
                 </View>
                 <View style={styles.busNumberTag}>
                   <Text style={styles.busNumberTagText} numberOfLines={1}>
-                    {veh.vehicleNumber || `Bus ${index + 1}`}
+                    {veh.vehicleNumber || 'Bus'}
                   </Text>
                 </View>
               </View>
             </Marker>
           );
         })}
-      </MapView>
+      </MapView> : (
+        <View style={styles.mapUnavailable}>
+          <Text style={styles.mapUnavailableText}>Location unavailable. Enable GPS or select a route stop.</Text>
+        </View>
+      )}
+
+      {routeCoordinates.length > 1 && !routeCoordinatesVerified && (
+        <View style={styles.geometryNotice}>
+          <Text style={styles.geometryNoticeText}>UNVERIFIED STOP CONNECTOR · NOT A ROAD ROUTE</Text>
+        </View>
+      )}
 
       {/* Re-Center on Active Vehicle FAB */}
       {showCenterButton && (
@@ -225,6 +254,18 @@ const styles = StyleSheet.create({
     backgroundColor: '#E2E8F0',
     position: 'relative',
   },
+  mapUnavailable: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  mapUnavailableText: {
+    color: COLORS.textSecondary,
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
   originMarker: {
     width: 22,
     height: 22,
@@ -254,6 +295,23 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   destMarkerInner: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#FFFFFF',
+  },
+  userMarker: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#2563EB',
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 5,
+  },
+  userMarkerInner: {
     width: 6,
     height: 6,
     borderRadius: 3,
@@ -364,5 +422,22 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 10,
     fontWeight: '700',
+  },
+  geometryNotice: {
+    position: 'absolute',
+    top: 14,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.94)',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#FCD34D',
+  },
+  geometryNoticeText: {
+    color: '#92400E',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.4,
   },
 });

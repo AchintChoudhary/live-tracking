@@ -17,8 +17,8 @@ import { useAuth } from '../../context/AuthContext';
 
 export const PassengerLoginScreen = ({ navigation }) => {
   const { login } = useAuth();
-  const [email, setEmail] = useState('passenger1@transit.com');
-  const [password, setPassword] = useState('password123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState({});
 
@@ -65,7 +65,7 @@ export const PassengerLoginScreen = ({ navigation }) => {
         <View style={[styles.card, SHADOWS.md]}>
           <CustomInput
             label="Email Address"
-            placeholder="passenger1@transit.com"
+            placeholder="name@example.com"
             value={email}
             onChangeText={(txt) => {
               setEmail(txt);
@@ -97,11 +97,6 @@ export const PassengerLoginScreen = ({ navigation }) => {
             style={styles.submitBtn}
           />
 
-          <View style={styles.demoBox}>
-            <Text style={styles.demoTitle}>Demo Passenger Account:</Text>
-            <Text style={styles.demoText}>Email: passenger1@transit.com</Text>
-            <Text style={styles.demoText}>Pass: password123</Text>
-          </View>
         </View>
 
         <TouchableOpacity
@@ -167,24 +162,6 @@ const styles = StyleSheet.create({
   },
   submitBtn: {
     marginTop: 8,
-  },
-  demoBox: {
-    marginTop: 18,
-    backgroundColor: '#F8FAFC',
-    padding: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  demoTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-  },
-  demoText: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    marginTop: 2,
   },
   registerLinkBox: {
     marginTop: 24,

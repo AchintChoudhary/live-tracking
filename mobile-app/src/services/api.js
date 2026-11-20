@@ -41,6 +41,8 @@ apiClient.interceptors.response.use(
 export const authApi = {
   login: (credentials) => apiClient.post('/auth/login', credentials),
   register: (userData) => apiClient.post('/auth/register', userData),
+  registerDriver: (driverData) => apiClient.post('/auth/driver/register', driverData),
+  getMe: () => apiClient.get('/auth/me'),
   getProfile: () => apiClient.get('/auth/profile'),
 };
 
@@ -59,6 +61,11 @@ export const passengerApi = {
   getRoutes: () => apiClient.get('/passenger/routes'),
   getActiveVehicles: () => apiClient.get('/passenger/active-vehicles'),
   getVehicleLocation: (vehicleId) => apiClient.get(`/passenger/vehicle/${vehicleId}/location`),
+  searchBuses: (params) => apiClient.get('/trips/search', { params }),
+  getTripEta: (tripId, boardingStopId, destinationStopId) =>
+    apiClient.get(`/trips/${tripId}/eta`, { params: { boardingStopId, destinationStopId } }),
+  reverseGeocode: (latitude, longitude) =>
+    apiClient.get('/location/reverse-geocode', { params: { latitude, longitude } }),
 };
 
 // 4. Routes Endpoints
@@ -66,12 +73,19 @@ export const routeApi = {
   getAllRoutes: () => apiClient.get('/routes'),
   getRouteById: (id) => apiClient.get(`/routes/${id}`),
   createRoute: (routeData) => apiClient.post('/routes', routeData),
+  previewRoute: (routeData) => apiClient.post('/routes/preview', routeData),
 };
 
 // 5. Vehicles Endpoints
 export const vehicleApi = {
   getAllVehicles: () => apiClient.get('/vehicles'),
+  getMyVehicles: () => apiClient.get('/vehicles/mine'),
+  createVehicle: (vehicleData) => apiClient.post('/vehicles', vehicleData),
   getVehicleById: (id) => apiClient.get(`/vehicles/${id}`),
+};
+
+export const placeApi = {
+  search: (query) => apiClient.get('/places/search', { params: { q: query } }),
 };
 
 // 6. Location Telemetry Endpoints

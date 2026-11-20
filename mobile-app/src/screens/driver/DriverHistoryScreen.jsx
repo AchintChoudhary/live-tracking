@@ -10,22 +10,28 @@ import {
 } from 'react-native';
 import { COLORS, SHADOWS } from '../../utils/theme';
 import { Header } from '../../components/Header';
-import { RouteIcon, BusIcon, ClockIcon, NavigationIcon } from '../../components/Icons';
+import { BusIcon } from '../../components/Icons';
 import { driverApi } from '../../services/api';
 
 export const DriverHistoryScreen = ({ navigation }) => {
   const [trips, setTrips] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState('');
 
   const fetchTrips = async () => {
     try {
       const res = await driverApi.getTrips();
       if (res.data?.data) {
         setTrips(res.data.data);
+        setLoadError('');
+      } else {
+        setTrips([]);
+        setLoadError('Trip history is unavailable. Refresh to try again.');
       }
     } catch (err) {
-      console.log('Error fetching driver trips:', err.message);
+      setTrips([]);
+      setLoadError(err.response?.data?.message || 'Trip history is unavailable. Check your connection and refresh.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -42,9 +48,9 @@ export const DriverHistoryScreen = ({ navigation }) => {
       <View style={[styles.tripCard, SHADOWS.sm]}>
         <View style={styles.cardHeader}>
           <View style={styles.routeCol}>
-            <Text style={styles.routeNumber}>{item.routeId?.routeNumber || 'R-101'}</Text>
+            <Text style={styles.routeNumber}>{item.routeId?.routeNumber || '—'}</Text>
             <Text style={styles.routeName} numberOfLines={1}>
-              {item.routeId?.routeName || 'Transit Route'}
+              {item.routeId?.routeName || 'Route unavailable'}
             </Text>
           </View>
           <View
@@ -59,7 +65,7 @@ export const DriverHistoryScreen = ({ navigation }) => {
                 { color: isCompleted ? COLORS.success : COLORS.danger },
               ]}
             >
-              {item.status?.toUpperCase() || 'COMPLETED'}
+              {item.status?.toUpperCase() || 'Status unavailable'}
             </Text>
           </View>
         </View>
@@ -67,7 +73,7 @@ export const DriverHistoryScreen = ({ navigation }) => {
         <View style={styles.vehicleRow}>
           <BusIcon size={16} color={COLORS.textSecondary} />
           <Text style={styles.vehicleText}>
-            Vehicle: {item.vehicleId?.vehicleNumber || 'BUS-01'} ({item.vehicleId?.vehicleType || 'Standard Transit'})
+            Vehicle: {item.vehicleId?.vehicleNumber || '—'} ({item.vehicleId?.vehicleType || '—'})
           </Text>
         </View>
 
@@ -75,21 +81,21 @@ export const DriverHistoryScreen = ({ navigation }) => {
           <View style={styles.metaCol}>
             <Text style={styles.metaLabel}>Start Time</Text>
             <Text style={styles.metaValue}>
-              {item.startTime ? new Date(item.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '08:30 AM'}
+              {item.startTime ? new Date(item.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Not recorded'}
             </Text>
           </View>
 
           <View style={styles.metaCol}>
             <Text style={styles.metaLabel}>End Time</Text>
             <Text style={styles.metaValue}>
-              {item.endTime ? new Date(item.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '09:15 AM'}
+              {item.endTime ? new Date(item.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Not recorded'}
             </Text>
           </View>
 
           <View style={styles.metaCol}>
             <Text style={styles.metaLabel}>Distance</Text>
             <Text style={styles.metaValue}>
-              {item.distance ? `${item.distance.toFixed(1)} km` : '12.4 km'}
+              {item.distance == null ? 'Not recorded' : `${Number(item.distance).toFixed(1)} km`}
             </Text>
           </View>
         </View>
@@ -101,7 +107,7 @@ export const DriverHistoryScreen = ({ navigation }) => {
     <View style={styles.container}>
       <Header
         title="My Trip History"
-        subtitle="Completed driver shifts & telemetry"
+        subtitle="Recorded driver trips"
         showBack
         onBack={() => navigation.goBack()}
       />
@@ -114,7 +120,7 @@ export const DriverHistoryScreen = ({ navigation }) => {
       ) : (
         <FlatList
           data={trips}
-          keyExtractor={(item) => item._id || Math.random().toString()}
+          keyExtractor={(item) => String(item._id)}
           renderItem={renderTripItem}
           contentContainerStyle={styles.listContent}
           showsVerticalScrollIndicator={false}
@@ -129,9 +135,9 @@ export const DriverHistoryScreen = ({ navigation }) => {
           }
           ListEmptyComponent={
             <View style={styles.emptyBox}>
-              <Text style={styles.emptyTitle}>No Trips Logged Yet</Text>
+              <Text style={styles.emptyTitle}>{loadError ? 'Trip history unavailable' : 'No trips recorded yet'}</Text>
               <Text style={styles.emptySubtitle}>
-                Completed trips will appear here with complete timestamps, route numbers, and distance logs.
+                {loadError || 'Recorded trips will appear here with their available timestamps, route numbers, and distances.'}
               </Text>
             </View>
           }

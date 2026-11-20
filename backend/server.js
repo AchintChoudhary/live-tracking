@@ -4,6 +4,7 @@ const cors = require('cors');
 const morgan = require('morgan');
 const dotenv = require('dotenv');
 const { Server } = require('socket.io');
+const mongoose = require('mongoose');
 
 const path = require('path');
 // Load environment variables from backend/.env or cwd
@@ -21,6 +22,8 @@ const passengerRoutes = require('./routes/passengerRoutes');
 const routeRoutes = require('./routes/routeRoutes');
 const vehicleRoutes = require('./routes/vehicleRoutes');
 const locationRoutes = require('./routes/locationRoutes');
+const tripRoutes = require('./routes/tripRoutes');
+const placeRoutes = require('./routes/placeRoutes');
 
 // Initialize Express & HTTP server
 const app = express();
@@ -57,8 +60,10 @@ if (process.env.NODE_ENV !== 'test') {
 
 // Health Check Endpoint
 app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'online',
+  const databaseConnected = mongoose.connection.readyState === 1;
+  res.status(databaseConnected ? 200 : 503).json({
+    status: databaseConnected ? 'online' : 'degraded',
+    database: databaseConnected ? 'connected' : 'unavailable',
     system: 'TransitTrack Live Real-Time Transport Tracking System',
     timestamp: new Date().toISOString(),
   });
@@ -71,6 +76,9 @@ app.use('/api/passenger', passengerRoutes);
 app.use('/api/routes', routeRoutes);
 app.use('/api/vehicles', vehicleRoutes);
 app.use('/api/location', locationRoutes);
+app.use('/api/locations', locationRoutes);
+app.use('/api/places', placeRoutes);
+app.use('/api/trips', tripRoutes);
 
 // 404 Route Not Found Handler
 app.use((req, res, next) => {

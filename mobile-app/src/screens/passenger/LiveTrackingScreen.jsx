@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
 import { COLORS, SHADOWS } from '../../utils/theme';
 import { Header } from '../../components/Header';
@@ -14,36 +13,45 @@ import { LiveBadge } from '../../components/LiveBadge';
 import { MapContainer } from '../../components/MapContainer';
 import {
   BusIcon,
-  PinIcon,
   ClockIcon,
   NavigationIcon,
   RadioTowerIcon,
   ChevronRightIcon,
-  UserIcon,
 } from '../../components/Icons';
 import { socketService } from '../../services/socket';
 import { routeApi, passengerApi } from '../../services/api';
-import { calculateDistanceKm, calculateETA } from '../../utils/distance';
 
 export const LiveTrackingScreen = ({ route: navRoute, navigation }) => {
-  const { selectedRoute: initialRoute, routeNumber } = navRoute.params || {};
+  const {
+    selectedRoute: initialRoute,
+    routeNumber,
+    initialVehicle,
+    passengerLocation,
+    boardingStop,
+    destinationStop,
+  } = navRoute.params || {};
 
-  const [routes, setRoutes] = useState([]);
   const [activeRoute, setActiveRoute] = useState(initialRoute || null);
   const [activeVehicles, setActiveVehicles] = useState([]);
-  const [selectedVehicle, setSelectedVehicle] = useState(null);
-  const [selectedStop, setSelectedStop] = useState(null);
-  const [liveLocation, setLiveLocation] = useState(null);
-  const [etaDisplay, setEtaDisplay] = useState('Calculating...');
-  const [distanceDisplay, setDistanceDisplay] = useState('Calculating...');
-  const [lastUpdateText, setLastUpdateText] = useState('Connecting...');
+  const [selectedVehicle, setSelectedVehicle] = useState(initialVehicle || null);
+  const [selectedStop, setSelectedStop] = useState(boardingStop || null);
+  const [liveLocation, setLiveLocation] = useState(
+    initialVehicle?.currentLocation || initialVehicle?.latestLocation || null
+  );
+  const [etaDisplay, setEtaDisplay] = useState('ETA unavailable');
+  const [distanceDisplay, setDistanceDisplay] = useState('Unavailable');
+  const [lastUpdateText, setLastUpdateText] = useState('No GPS update yet');
   const [loading, setLoading] = useState(true);
   const [isSocketConnected, setIsSocketConnected] = useState(false);
-  const [tripLiveStatus, setTripLiveStatus] = useState('On Schedule');
+  const [tripLiveStatus, setTripLiveStatus] = useState('Status unavailable');
+  const [clockNow, setClockNow] = useState(Date.now());
 
-  const activeTripSubscribedRef = useRef(null);
+  useEffect(() => {
+    const timer = setInterval(() => setClockNow(Date.now()), 15000);
+    return () => clearInterval(timer);
+  }, []);
 
-  // 1. Load routes & active vehicles on mount
+  // Load configured routes and current active trips.
   useEffect(() => {
     loadData();
   }, []);
@@ -56,35 +64,31 @@ export const LiveTrackingScreen = ({ route: navRoute, navigation }) => {
         passengerApi.getActiveVehicles(),
       ]);
 
-      let chosenRoute = activeRoute;
+      let chosenRoute = activeRoute || initialVehicle?.route || initialRoute || null;
       if (routesRes.data?.data) {
-        setRoutes(routesRes.data.data);
-        if (!chosenRoute && routesRes.data.data.length > 0) {
-          const match = routeNumber
-            ? routesRes.data.data.find((r) => r.routeNumber === routeNumber)
-            : routesRes.data.data[0];
-          chosenRoute = match || routesRes.data.data[0];
-          setActiveRoute(chosenRoute);
+        if (!chosenRoute && routeNumber) {
+          chosenRoute = routesRes.data.data.find((r) => r.routeNumber === routeNumber) || null;
         }
-      }
-
-      if (chosenRoute?.stops && chosenRoute.stops.length > 0) {
-        setSelectedStop(chosenRoute.stops[0]);
       }
 
       if (vehiclesRes.data?.data) {
         setActiveVehicles(vehiclesRes.data.data);
-        // Find vehicle matching this route
         const routeVehicles = vehiclesRes.data.data.filter(
-          (v) => v.route?._id === chosenRoute?._id || v.route?.routeNumber === chosenRoute?.routeNumber
+          (v) => !chosenRoute || v.route?._id === chosenRoute?._id || v.route?.routeNumber === chosenRoute?.routeNumber
         );
-        if (routeVehicles.length > 0) {
-          setSelectedVehicle(routeVehicles[0]);
-          if (routeVehicles[0].latestLocation) {
-            setLiveLocation(routeVehicles[0].latestLocation);
-          }
+        const chosenVehicle = routeVehicles.find(
+          (item) => String(item.tripId) === String(initialVehicle?.tripId)
+        ) || routeVehicles[0] || null;
+        setSelectedVehicle(chosenVehicle);
+        setLiveLocation(chosenVehicle?.latestLocation || chosenVehicle?.currentLocation || null);
+        if (chosenVehicle) {
+          chosenRoute = chosenRoute || chosenVehicle.route || null;
+          setTripLiveStatus(chosenVehicle.status || chosenVehicle.liveStatus || 'Status unavailable');
+          const location = chosenVehicle.latestLocation || chosenVehicle.currentLocation;
+          if (location?.timestamp) setLastUpdateText(new Date(location.timestamp).toLocaleTimeString());
         }
       }
+      setActiveRoute(chosenRoute);
     } catch (err) {
       console.log('Error loading initial tracking data:', err.message);
     } finally {
@@ -92,159 +96,169 @@ export const LiveTrackingScreen = ({ route: navRoute, navigation }) => {
     }
   };
 
-  // 2. Manage Socket.IO Subscription to selected vehicle/trip
+  // Subscribe only to trips shown on this map.
   useEffect(() => {
-    let unsubscribeLocation = null;
-    let unsubscribeStatus = null;
-    let unsubscribeStarted = null;
-    let unsubscribeCompleted = null;
-
-    socketService.connect().then(() => {
-      setIsSocketConnected(true);
-      socketService.passengerJoin('guest_passenger');
-
-      // Subscribe to trip if active
-      const targetTripId = selectedVehicle?.tripId;
-      if (targetTripId) {
-        if (activeTripSubscribedRef.current && activeTripSubscribedRef.current !== targetTripId) {
-          socketService.unsubscribeTrip(activeTripSubscribedRef.current);
-        }
-        activeTripSubscribedRef.current = targetTripId;
-        socketService.subscribeTrip(targetTripId, (res) => {
-          if (res?.hasCachedLocation && res.lastLocation) {
-            setLiveLocation(res.lastLocation);
-            setLastUpdateText('Just now');
-          }
-        });
+    let active = true;
+    const relevantTrips = activeVehicles.filter((vehicle) =>
+      !activeRoute || vehicle.route?._id === activeRoute._id ||
+      vehicle.route?.routeNumber === activeRoute.routeNumber
+    );
+    const tripIds = relevantTrips.map((vehicle) => String(vehicle.tripId));
+    const unsubscribeLocation = socketService.onVehicleLocation((data) => {
+      if (!active || !tripIds.includes(String(data?.tripId))) return;
+      const location = {
+        tripId: data.tripId,
+        vehicleId: data.vehicleId,
+        latitude: data.latitude,
+        longitude: data.longitude,
+        speed: data.speed,
+        heading: data.heading,
+        accuracy: data.accuracy,
+        timestamp: data.timestamp,
+      };
+      setActiveVehicles((current) => current.map((vehicle) =>
+        String(vehicle.tripId) === String(data.tripId)
+          ? { ...vehicle, latestLocation: location }
+          : vehicle
+      ));
+      if (String(data.tripId) === String(selectedVehicle?.tripId)) {
+        setLiveLocation(location);
+        setLastUpdateText(new Date(data.timestamp).toLocaleTimeString());
       }
-
-      // Listen for dynamically initiated trips on this route
-      unsubscribeStarted = socketService.onTripStarted((data) => {
-        if (data && (!activeRoute || data.routeId === activeRoute._id || data.routeId === activeRoute.id)) {
-          loadData();
-          socketService.subscribeTrip(data.tripId);
-        }
-      });
-
-      // Listen for real-time driver trip status reports
-      unsubscribeStatus = socketService.onTripStatus((data) => {
-        if (data && (!selectedVehicle || data.tripId === selectedVehicle?.tripId)) {
-          const statusText = data.liveStatus || data.status;
-          if (statusText) {
-            setTripLiveStatus(statusText);
-          }
-        }
-      });
-
-      // Listen for vehicle location updates
-      unsubscribeLocation = socketService.onVehicleLocation((data) => {
-        if (data && (!selectedVehicle || data.vehicleId === selectedVehicle.vehicle?._id || data.tripId === selectedVehicle.tripId)) {
-          setLiveLocation({
-            tripId: data.tripId,
-            vehicleId: data.vehicleId,
-            latitude: data.latitude,
-            longitude: data.longitude,
-            speed: data.speed || 0,
-            heading: data.heading || 0,
-            accuracy: data.accuracy || 10,
-            timestamp: data.timestamp,
-          });
-
-          // Compute friendly elapsed update string
-          setLastUpdateText('Just now');
-        }
-      });
-
-      // Listen for trip completed
-      unsubscribeCompleted = socketService.onTripCompleted((data) => {
-        if (data.tripId === selectedVehicle?.tripId) {
-          Alert.alert('Trip Concluded', 'The driver has completed this route. Telemetry has stopped.');
-          setEtaDisplay('Trip Completed');
-          setTripLiveStatus('Concluded');
-        }
-      });
     });
+    const unsubscribeStatus = socketService.onTripStatus((data) => {
+      if (active && String(data?.tripId) === String(selectedVehicle?.tripId)) {
+        setTripLiveStatus(data.liveStatus || data.status || 'Status unavailable');
+      }
+    });
+    const unsubscribeCompleted = socketService.onTripCompleted((data) => {
+      if (!active || !tripIds.includes(String(data?.tripId))) return;
+      setActiveVehicles((current) => current.filter(
+        (vehicle) => String(vehicle.tripId) !== String(data.tripId)
+      ));
+      if (String(data.tripId) === String(selectedVehicle?.tripId)) {
+        setEtaDisplay('Trip completed');
+        setTripLiveStatus('Trip completed');
+      }
+    });
+    const unsubscribeConnect = socketService.on('connect', () => setIsSocketConnected(true));
+    const unsubscribeDisconnect = socketService.on('disconnect', () => setIsSocketConnected(false));
+
+    socketService.connect()
+      .then((socket) => {
+        if (!active) return;
+        setIsSocketConnected(!!socket?.connected);
+        tripIds.forEach((tripId) => {
+          socketService.subscribeTrip(tripId, (response) => {
+            if (!active || !response?.hasCachedLocation || !response.lastLocation) return;
+            const location = response.lastLocation;
+            setActiveVehicles((current) => current.map((vehicle) =>
+              String(vehicle.tripId) === tripId
+                ? { ...vehicle, latestLocation: location }
+                : vehicle
+            ));
+            if (tripId === String(selectedVehicle?.tripId)) {
+              setLiveLocation(location);
+              setLastUpdateText(new Date(location.timestamp).toLocaleTimeString());
+            }
+          });
+        });
+      })
+      .catch((error) => console.warn('Live map connection failed:', error.message));
 
     return () => {
-      if (unsubscribeLocation) unsubscribeLocation();
-      if (unsubscribeStarted) unsubscribeStarted();
-      if (unsubscribeStatus) unsubscribeStatus();
-      if (unsubscribeCompleted) unsubscribeCompleted();
-      if (activeTripSubscribedRef.current) {
-        socketService.unsubscribeTrip(activeTripSubscribedRef.current);
+      active = false;
+      unsubscribeLocation();
+      unsubscribeStatus();
+      unsubscribeCompleted();
+      unsubscribeConnect();
+      unsubscribeDisconnect();
+      tripIds.forEach((tripId) => socketService.unsubscribeTrip(tripId));
+    };
+  }, [activeRoute?._id, activeVehicles.map((vehicle) => vehicle.tripId).join('|'), selectedVehicle?.tripId]);
+
+  // Driving ETA and road distance are provided by the configured routing service.
+  useEffect(() => {
+    let active = true;
+    const refreshEta = async () => {
+      const tripId = selectedVehicle?.tripId;
+      if (!tripId || !selectedStop?._id) {
+        setEtaDisplay('ETA unavailable');
+        setDistanceDisplay('Unavailable');
+        return;
+      }
+      try {
+        const response = await passengerApi.getTripEta(
+          tripId,
+          selectedStop._id,
+          destinationStop?._id
+        );
+        if (!active) return;
+        const eta = response.data?.data;
+        if (eta?.etaMinutes == null) {
+          setEtaDisplay((eta?.etaStatus || 'ETA unavailable').replace(/-/g, ' '));
+          setDistanceDisplay('Unavailable');
+          return;
+        }
+        setEtaDisplay(`${eta.etaMinutes} min`);
+        setDistanceDisplay(
+          eta.distanceMeters == null ? 'Unavailable' : `${(eta.distanceMeters / 1000).toFixed(1)} km road`
+        );
+      } catch (error) {
+        if (!active) return;
+        setEtaDisplay('ETA unavailable');
+        setDistanceDisplay('Unavailable');
+        if (error.response?.status !== 409 && error.response?.status !== 404) {
+          console.warn('Driving ETA unavailable:', error.message);
+        }
       }
     };
-  }, [selectedVehicle?.tripId, activeRoute?._id]);
 
-  // 3. Compute ETA and remaining distance
-  useEffect(() => {
-    if (liveLocation && selectedStop) {
-      const dist = calculateDistanceKm(
-        liveLocation.latitude,
-        liveLocation.longitude,
-        selectedStop.latitude,
-        selectedStop.longitude
-      );
-
-      if (dist >= 0) {
-        setDistanceDisplay(`${dist.toFixed(2)} km`);
-
-        // ETA calculation with speed check
-        if (liveLocation.speed > 3) {
-          const etaMins = calculateETA(dist, liveLocation.speed);
-          setEtaDisplay(`${etaMins} mins`);
-        } else if (dist < 0.05) {
-          setEtaDisplay('Arrived at Stop');
-        } else {
-          // Average transit urban speed
-          const etaMins = calculateETA(dist, 25);
-          setEtaDisplay(`~${etaMins} mins`);
-        }
-      } else {
-        setDistanceDisplay('Distance unavailable');
-        setEtaDisplay('ETA unavailable');
-      }
-    } else if (selectedStop && activeRoute?.coordinates?.[0]) {
-      // Vehicle hasn't reported location yet
-      setDistanceDisplay('Awaiting GPS...');
-      setEtaDisplay('ETA unavailable');
-    } else {
-      setDistanceDisplay('Distance unavailable');
-      setEtaDisplay('ETA unavailable');
-    }
-  }, [liveLocation, selectedStop, activeRoute]);
+    refreshEta();
+    const timer = setInterval(refreshEta, 45000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [selectedVehicle?.tripId, selectedStop?._id, destinationStop?._id]);
 
   // Prepare vehicle markers for MapContainer
   const mapVehicles = activeVehicles
-    .filter((v) => !activeRoute || v.route?._id === activeRoute._id || v.route?.routeNumber === activeRoute.routeNumber)
+    .filter((v) => v.latestLocation && (!activeRoute || v.route?._id === activeRoute._id || v.route?.routeNumber === activeRoute.routeNumber))
     .map((v) => ({
       tripId: v.tripId,
       vehicleId: v.vehicle?._id,
-      vehicleNumber: v.vehicle?.vehicleNumber || 'BUS',
-      latitude: v.tripId === liveLocation?.tripId ? liveLocation.latitude : v.latestLocation?.latitude || activeRoute?.coordinates?.[0]?.latitude || 37.7749,
-      longitude: v.tripId === liveLocation?.tripId ? liveLocation.longitude : v.latestLocation?.longitude || activeRoute?.coordinates?.[0]?.longitude || -122.4194,
-      speed: v.tripId === liveLocation?.tripId ? liveLocation.speed : v.latestLocation?.speed || 0,
-      heading: v.tripId === liveLocation?.tripId ? liveLocation.heading : v.latestLocation?.heading || 0,
-      accuracy: v.tripId === liveLocation?.tripId ? liveLocation.accuracy : 10,
+      vehicleNumber: v.vehicle?.vehicleNumber || 'Bus',
+      latitude: v.tripId === liveLocation?.tripId ? liveLocation.latitude : v.latestLocation.latitude,
+      longitude: v.tripId === liveLocation?.tripId ? liveLocation.longitude : v.latestLocation.longitude,
+      speed: v.tripId === liveLocation?.tripId ? liveLocation.speed : v.latestLocation?.speed,
+      heading: v.tripId === liveLocation?.tripId ? liveLocation.heading : v.latestLocation?.heading,
+      accuracy: v.tripId === liveLocation?.tripId ? liveLocation.accuracy : v.latestLocation?.accuracy,
     }));
 
-  const fallbackLocation =
+  const displayLocation =
     liveLocation ||
     (mapVehicles[0]
       ? {
+          tripId: mapVehicles[0].tripId,
+          vehicleId: mapVehicles[0].vehicleId,
           latitude: mapVehicles[0].latitude,
           longitude: mapVehicles[0].longitude,
           speed: mapVehicles[0].speed,
+          heading: mapVehicles[0].heading,
           vehicleNumber: mapVehicles[0].vehicleNumber,
-        }
-      : activeRoute?.coordinates?.[0]
-      ? {
-          latitude: activeRoute.coordinates[0].latitude,
-          longitude: activeRoute.coordinates[0].longitude,
-          speed: 0,
-          vehicleNumber: 'BUS-01',
+          timestamp: mapVehicles[0].timestamp,
         }
       : null);
+  const locationTimestamp = displayLocation?.timestamp
+    ? new Date(displayLocation.timestamp).getTime()
+    : NaN;
+  const gpsIsStale =
+    !Number.isFinite(locationTimestamp) ||
+    clockNow - locationTimestamp > 2 * 60 * 1000;
+  const eligibleBoardingStops = (activeRoute?.stops || []).filter(
+    (stop) => !destinationStop || stop.order < destinationStop.order
+  );
 
   return (
     <View style={styles.container}>
@@ -259,18 +273,28 @@ export const LiveTrackingScreen = ({ route: navRoute, navigation }) => {
       {/* Main Map View */}
       <View style={styles.mapWrapper}>
         <MapContainer
-          busLocation={fallbackLocation}
+          busLocation={displayLocation}
+          userLocation={passengerLocation}
           vehicles={mapVehicles}
           routeCoordinates={activeRoute?.coordinates || []}
-          stops={activeRoute?.stops || []}
+          routeCoordinatesVerified={activeRoute?.coordinatesVerified === true}
+          stops={eligibleBoardingStops}
           startingPoint={activeRoute?.startingPoint}
           destination={activeRoute?.destination}
           selectedStop={selectedStop}
-          onStopSelect={(stop) => setSelectedStop(stop)}
+          destinationStop={destinationStop}
+          onStopSelect={(stop) => {
+            if (!destinationStop || stop.order < destinationStop.order) setSelectedStop(stop);
+          }}
           selectedVehicleId={selectedVehicle?.tripId || selectedVehicle?.vehicle?._id}
           onVehicleSelect={(veh) => {
             const matched = activeVehicles.find((v) => v.tripId === veh.tripId || v.vehicle?._id === veh.vehicleId);
-            if (matched) setSelectedVehicle(matched);
+            if (matched) {
+              setSelectedVehicle(matched);
+              const location = matched.latestLocation || matched.currentLocation || null;
+              setLiveLocation(location);
+              if (location?.timestamp) setLastUpdateText(new Date(location.timestamp).toLocaleTimeString());
+            }
           }}
           showCenterButton
           style={StyleSheet.absoluteFillObject}
@@ -278,9 +302,11 @@ export const LiveTrackingScreen = ({ route: navRoute, navigation }) => {
 
         {/* Live Radar Capsule */}
         <View style={styles.radarCapsule}>
-          <RadioTowerIcon size={16} color={liveLocation ? COLORS.success : COLORS.warning} />
+          <RadioTowerIcon size={16} color={displayLocation && !gpsIsStale ? COLORS.success : COLORS.warning} />
           <Text style={styles.radarText}>
-            {liveLocation ? `Live GPS Stream (${lastUpdateText})` : 'Awaiting Driver Telemetry'}
+            {displayLocation
+              ? `${gpsIsStale ? 'GPS stale' : 'Live GPS'} · ${lastUpdateText}`
+              : 'No driver GPS update'}
           </Text>
         </View>
 
@@ -290,8 +316,11 @@ export const LiveTrackingScreen = ({ route: navRoute, navigation }) => {
           activeOpacity={0.85}
           onPress={() =>
             navigation.navigate('RouteUpdates', {
+              tripId: selectedVehicle?.tripId,
+              tripData: selectedVehicle,
               route: activeRoute,
               selectedStop,
+              destinationStop,
               liveLocation,
             })
           }
@@ -313,12 +342,17 @@ export const LiveTrackingScreen = ({ route: navRoute, navigation }) => {
           <View style={{ flex: 1, marginLeft: 12 }}>
             <View style={styles.liveTagRow}>
               <Text style={styles.vehicleNumberTag}>
-                {selectedVehicle?.vehicle?.vehicleNumber || mapVehicles[0]?.vehicleNumber || 'Transit Bus'}
+                {selectedVehicle?.vehicle?.vehicleNumber || mapVehicles[0]?.vehicleNumber || 'Bus'}
               </Text>
-              <LiveBadge label="TRACKING" size="sm" />
+              <LiveBadge label={selectedVehicle?.tripId ? 'TRACKING' : 'NO ACTIVE TRIP'} size="sm" />
             </View>
             <Text style={styles.terminalSubtext} numberOfLines={1}>
-              {activeRoute?.startingPoint || 'Origin'} ➔ {activeRoute?.destination || 'Destination'}
+              {activeRoute
+                ? `${activeRoute.startingPoint} → ${activeRoute.destination}`
+                : 'No route selected'}
+            </Text>
+            <Text style={styles.terminalSubtext} numberOfLines={1}>
+              Status: {tripLiveStatus}
             </Text>
           </View>
         </View>
@@ -328,7 +362,7 @@ export const LiveTrackingScreen = ({ route: navRoute, navigation }) => {
           <View style={styles.stopInfoLeft}>
             <Text style={styles.stopLabel}>Target Stop:</Text>
             <Text style={styles.stopName} numberOfLines={1}>
-              {selectedStop?.name || 'Central Transit Station'}
+              {selectedStop?.name || 'Select a route stop'}
             </Text>
           </View>
 
@@ -356,13 +390,13 @@ export const LiveTrackingScreen = ({ route: navRoute, navigation }) => {
         </View>
 
         {/* Bus Stop Selector Chips */}
-        <Text style={styles.selectStopPrompt}>Select Target Stop for Live Countdown:</Text>
+        <Text style={styles.selectStopPrompt}>Select a boarding stop for driving ETA:</Text>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.stopsScroll}
         >
-          {activeRoute?.stops?.map((stop, index) => {
+          {eligibleBoardingStops.map((stop, index) => {
             const isSelected = selectedStop?.name === stop.name;
             return (
               <TouchableOpacity

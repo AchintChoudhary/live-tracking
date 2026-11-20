@@ -11,7 +11,7 @@
  * @returns {number} Distance in kilometers
  */
 export const calculateDistanceKm = (lat1, lon1, lat2, lon2) => {
-  if (!lat1 || !lon1 || !lat2 || !lon2) return 0;
+  if (![lat1, lon1, lat2, lon2].every(Number.isFinite)) return 0;
 
   const R = 6371; // Earth's radius in km
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -24,20 +24,6 @@ export const calculateDistanceKm = (lat1, lon1, lat2, lon2) => {
       Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
-};
-
-/**
- * Computes estimated time of arrival (ETA) in integer minutes
- * @param {number} distanceKm Distance in kilometers
- * @param {number} speedKmh Average speed in km/h (defaults to 25 km/h for urban transit)
- * @returns {number} ETA in minutes
- */
-export const calculateETA = (distanceKm, speedKmh = 25) => {
-  if (!distanceKm || distanceKm <= 0) return 1;
-  const speed = speedKmh > 5 ? speedKmh : 25;
-  const hours = distanceKm / speed;
-  const minutes = Math.round(hours * 60);
-  return Math.max(1, minutes);
 };
 
 /**

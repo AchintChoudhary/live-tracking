@@ -17,7 +17,7 @@ export const EndTripScreen = ({ route, navigation }) => {
           </View>
           <Text style={styles.title}>Trip Completed!</Text>
           <Text style={styles.subtitle}>
-            Your shift route has concluded successfully. Live telemetry has ended and records are logged.
+            Your trip has ended. The recorded trip details are shown below.
           </Text>
         </View>
 
@@ -32,7 +32,7 @@ export const EndTripScreen = ({ route, navigation }) => {
             <View style={styles.logContent}>
               <Text style={styles.logLabel}>Route Name & Number</Text>
               <Text style={styles.logValue}>
-                {tripDetails?.routeNumber || 'R-101'} - {tripDetails?.routeName || 'North-South Line'}
+                {[tripDetails?.routeNumber, tripDetails?.routeName].filter(Boolean).join(' - ') || 'Not recorded'}
               </Text>
             </View>
           </View>
@@ -45,7 +45,7 @@ export const EndTripScreen = ({ route, navigation }) => {
             </View>
             <View style={styles.logContent}>
               <Text style={styles.logLabel}>Assigned Transit Vehicle</Text>
-              <Text style={styles.logValue}>{tripDetails?.vehicleNumber || 'BUS-01'}</Text>
+              <Text style={styles.logValue}>{tripDetails?.vehicleNumber || 'Not recorded'}</Text>
             </View>
           </View>
 
@@ -57,7 +57,7 @@ export const EndTripScreen = ({ route, navigation }) => {
             </View>
             <View style={styles.logContent}>
               <Text style={styles.logLabel}>Trip Duration</Text>
-              <Text style={styles.logValue}>{tripDetails?.duration || '42m 15s'}</Text>
+              <Text style={styles.logValue}>{tripDetails?.duration || 'Not recorded'}</Text>
             </View>
           </View>
 
@@ -69,7 +69,7 @@ export const EndTripScreen = ({ route, navigation }) => {
             </View>
             <View style={styles.logContent}>
               <Text style={styles.logLabel}>Distance Travelled</Text>
-              <Text style={styles.logValue}>{tripDetails?.distance || '14.8 km'}</Text>
+              <Text style={styles.logValue}>{tripDetails?.distance || 'Not recorded'}</Text>
             </View>
           </View>
         </View>

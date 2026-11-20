@@ -2,14 +2,11 @@ import React from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import { COLORS, SHADOWS } from '../../utils/theme';
 import { Header } from '../../components/Header';
-import { CustomButton } from '../../components/CustomButton';
 import {
   UserIcon,
-  HeartIcon,
   HistoryIcon,
   ChevronRightIcon,
   LogoutIcon,
-  PinIcon,
 } from '../../components/Icons';
 import { useAuth } from '../../context/AuthContext';
 
@@ -34,8 +31,8 @@ export const PassengerProfileScreen = ({ navigation }) => {
             <UserIcon size={36} color={COLORS.primary} />
           </View>
           <View style={styles.profileText}>
-            <Text style={styles.userName}>{user?.name || 'Passenger User'}</Text>
-            <Text style={styles.userEmail}>{user?.email || 'passenger1@transit.com'}</Text>
+            <Text style={styles.userName}>{user?.name || 'Passenger'}</Text>
+            {!!user?.email && <Text style={styles.userEmail}>{user.email}</Text>}
             <View style={styles.roleTag}>
               <Text style={styles.roleTagText}>COMMUTER ACCOUNT</Text>
             </View>
@@ -47,37 +44,21 @@ export const PassengerProfileScreen = ({ navigation }) => {
         <View style={[styles.infoCard, SHADOWS.sm]}>
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Full Name</Text>
-            <Text style={styles.infoVal}>{user?.name || 'Alice Johnson'}</Text>
+            <Text style={styles.infoVal}>{user?.name || 'Not provided'}</Text>
           </View>
           <View style={styles.divider} />
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Email</Text>
-            <Text style={styles.infoVal}>{user?.email || 'passenger1@transit.com'}</Text>
+            <Text style={styles.infoVal}>{user?.email || 'Not provided'}</Text>
           </View>
           <View style={styles.divider} />
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Phone</Text>
-            <Text style={styles.infoVal}>{user?.phone || '+1 (555) 234-5678'}</Text>
+            <Text style={styles.infoVal}>{user?.phone || 'Not provided'}</Text>
           </View>
         </View>
 
-        {/* Travel Preferences & Actions */}
-        <Text style={styles.sectionTitle}>Transit Shortcuts</Text>
-        <TouchableOpacity
-          style={[styles.menuItem, SHADOWS.sm]}
-          activeOpacity={0.8}
-          onPress={() => navigation.navigate('Routes', { filter: 'favorites' })}
-        >
-          <View style={[styles.menuIcon, { backgroundColor: '#FEE2E2' }]}>
-            <HeartIcon size={20} color={COLORS.danger} filled />
-          </View>
-          <View style={{ flex: 1, marginLeft: 12 }}>
-            <Text style={styles.menuTitle}>Favorite Routes</Text>
-            <Text style={styles.menuDesc}>2 saved express transit corridors</Text>
-          </View>
-          <ChevronRightIcon size={20} color={COLORS.textSecondary} />
-        </TouchableOpacity>
-
+        <Text style={styles.sectionTitle}>Trip Information</Text>
         <TouchableOpacity
           style={[styles.menuItem, SHADOWS.sm]}
           activeOpacity={0.8}
@@ -88,28 +69,7 @@ export const PassengerProfileScreen = ({ navigation }) => {
           </View>
           <View style={{ flex: 1, marginLeft: 12 }}>
             <Text style={styles.menuTitle}>Recent Travel History</Text>
-            <Text style={styles.menuDesc}>Review tracked routes & arrival logs</Text>
-          </View>
-          <ChevronRightIcon size={20} color={COLORS.textSecondary} />
-        </TouchableOpacity>
-
-        {/* App Settings & Dispatch Link */}
-        <TouchableOpacity
-          style={[styles.menuItem, SHADOWS.sm]}
-          activeOpacity={0.8}
-          onPress={() =>
-            Alert.alert(
-              'App Version & Telemetry',
-              'Transit Track Live v1.0.0 (Android Production Build)\nBackend: Node/Express + MongoDB\nTelemetry: Socket.IO Engine v4'
-            )
-          }
-        >
-          <View style={[styles.menuIcon, { backgroundColor: '#DCFCE7' }]}>
-            <PinIcon size={20} color={COLORS.success} />
-          </View>
-          <View style={{ flex: 1, marginLeft: 12 }}>
-            <Text style={styles.menuTitle}>App Version & Settings</Text>
-            <Text style={styles.menuDesc}>v1.0.0 • Production Build</Text>
+            <Text style={styles.menuDesc}>View updates for a selected live trip</Text>
           </View>
           <ChevronRightIcon size={20} color={COLORS.textSecondary} />
         </TouchableOpacity>
@@ -225,13 +185,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.cardBorder,
     marginBottom: 10,
-  },
-  menuIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   menuTitle: {
     fontSize: 14,

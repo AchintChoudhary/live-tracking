@@ -1,5 +1,5 @@
 /**
- * Distance, Speed & ETA utilities for backend telemetry
+ * Geographic distance and coordinate validation utilities for backend telemetry
  */
 
 /**
@@ -27,19 +27,6 @@ const calculateDistanceKm = (lat1, lon1, lat2, lon2) => {
 };
 
 /**
- * Calculates estimated arrival time (ETA) in integer minutes
- * @param {number} distanceKm Distance in km
- * @param {number} speedKmh Average speed in km/h (minimum 20 km/h)
- * @returns {number} ETA in minutes
- */
-const calculateETA = (distanceKm, speedKmh = 25) => {
-  if (!distanceKm || distanceKm <= 0) return 1;
-  const effectiveSpeed = speedKmh > 5 ? speedKmh : 25;
-  const hours = distanceKm / effectiveSpeed;
-  return Math.max(1, Math.round(hours * 60));
-};
-
-/**
  * Validates GPS latitude and longitude bounds
  */
 const isValidCoordinates = (lat, lon) => {
@@ -55,6 +42,5 @@ const isValidCoordinates = (lat, lon) => {
 
 module.exports = {
   calculateDistanceKm,
-  calculateETA,
   isValidCoordinates,
 };

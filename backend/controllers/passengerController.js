@@ -16,7 +16,6 @@ exports.getDashboard = async (req, res, next) => {
       data: {
         activeBuses: activeTripsCount,
         totalRoutes: totalRoutesCount,
-        systemStatus: 'Operational',
       },
     });
   } catch (error) {
@@ -63,13 +62,7 @@ exports.getActiveVehicles = async (req, res, next) => {
           route: trip.routeId,
           driver: trip.driverId,
           startTime: trip.startTime,
-          latestLocation: latestLoc || {
-            latitude: trip.startLocation?.latitude || 37.7749,
-            longitude: trip.startLocation?.longitude || -122.4194,
-            speed: 0,
-            heading: 0,
-            timestamp: trip.startTime,
-          },
+          latestLocation: latestLoc || null,
         };
       })
     );

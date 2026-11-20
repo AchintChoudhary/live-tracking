@@ -10,11 +10,14 @@ import { BusIcon, RouteIcon, UserIcon, RadioTowerIcon, HistoryIcon } from '../co
 
 // Driver Screens
 import { DriverLoginScreen } from '../screens/driver/DriverLoginScreen';
+import { DriverRegisterScreen } from '../screens/driver/DriverRegisterScreen';
 import { DriverDashboard } from '../screens/driver/DriverDashboard';
 import { StartTripScreen } from '../screens/driver/StartTripScreen';
 import { TripTrackingScreen } from '../screens/driver/TripTrackingScreen';
 import { EndTripScreen } from '../screens/driver/EndTripScreen';
 import { DriverHistoryScreen } from '../screens/driver/DriverHistoryScreen';
+import { DriverVehiclesScreen } from '../screens/driver/DriverVehiclesScreen';
+import { AddBusScreen } from '../screens/driver/AddBusScreen';
 
 // Passenger Screens
 import { PassengerWelcomeScreen } from '../screens/passenger/PassengerWelcomeScreen';
@@ -25,6 +28,7 @@ import { RoutesScreen } from '../screens/passenger/RoutesScreen';
 import { LiveTrackingScreen } from '../screens/passenger/LiveTrackingScreen';
 import { RouteUpdatesScreen } from '../screens/passenger/RouteUpdatesScreen';
 import { PassengerProfileScreen } from '../screens/passenger/PassengerProfileScreen';
+import { PassengerBusSearchScreen } from '../screens/passenger/PassengerBusSearchScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -93,6 +97,7 @@ function PassengerStackNavigator() {
     <Stack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
       <Stack.Screen name="PassengerTabs" component={PassengerBottomTabs} />
       <Stack.Screen name="Routes" component={RoutesScreen} />
+      <Stack.Screen name="PassengerBusSearch" component={PassengerBusSearchScreen} />
       <Stack.Screen name="LiveTracking" component={LiveTrackingScreen} />
       <Stack.Screen name="RouteUpdates" component={RouteUpdatesScreen} />
       <Stack.Screen name="PassengerProfile" component={PassengerProfileScreen} />
@@ -105,6 +110,8 @@ function DriverStackNavigator() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
       <Stack.Screen name="DriverDashboard" component={DriverDashboard} />
+      <Stack.Screen name="DriverVehicles" component={DriverVehiclesScreen} />
+      <Stack.Screen name="AddBus" component={AddBusScreen} />
       <Stack.Screen name="StartTrip" component={StartTripScreen} />
       <Stack.Screen name="TripTracking" component={TripTrackingScreen} />
       <Stack.Screen name="EndTrip" component={EndTripScreen} />
@@ -124,6 +131,7 @@ function AuthStackNavigator() {
       <Stack.Screen name="PassengerLogin" component={PassengerLoginScreen} />
       <Stack.Screen name="PassengerRegister" component={PassengerRegisterScreen} />
       <Stack.Screen name="DriverLogin" component={DriverLoginScreen} />
+      <Stack.Screen name="DriverRegister" component={DriverRegisterScreen} />
     </Stack.Navigator>
   );
 }

@@ -4,7 +4,7 @@ import { calculateDistanceKm } from '../utils/distance';
 
 /**
  * Android Device GPS Service
- * Manages runtime location permissions (FINE, COARSE, BACKGROUND),
+ * Manages runtime foreground location permissions,
  * hardware GPS watch stream, foreground notification options,
  * duplicate coordinate filtering, and cumulative distance calculation.
  */
@@ -19,8 +19,7 @@ class LocationService {
   }
 
   /**
-   * Requests Android GPS permissions.
-   * Prompts for ACCESS_FINE_LOCATION and background/foreground location if supported.
+   * Requests foreground Android GPS permissions.
    */
   async requestLocationPermissions() {
     if (Platform.OS === 'android') {
@@ -41,29 +40,7 @@ class LocationService {
           return false;
         }
 
-        // On Android 10+ (API 29+), request background tracking for drivers
-        if (Platform.Version >= 29) {
-          try {
-            await PermissionsAndroid.request(
-              PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION
-            );
-          } catch (e) {
-            console.log('Background permission prompt note:', e);
-          }
-        }
-
-        // On Android 13+ (API 33+), request POST_NOTIFICATIONS for foreground service notification
-        if (Platform.Version >= 33) {
-          try {
-            await PermissionsAndroid.request(
-              PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS
-            );
-          } catch (e) {
-            console.log('Post notifications permission note:', e);
-          }
-        }
-
-        return true;
+        return fineGranted || coarseGranted;
       } catch (err) {
         console.warn('Location permission request error:', err);
         return false;
@@ -83,10 +60,14 @@ class LocationService {
           const loc = {
             latitude: coords.latitude,
             longitude: coords.longitude,
-            accuracy: coords.accuracy || 10,
-            speed: coords.speed && coords.speed > 0 ? Math.round(coords.speed * 3.6) : 0, // convert m/s to km/h
-            heading: coords.heading != null ? Math.round(coords.heading) : 0,
-            altitude: coords.altitude || 0,
+            accuracy: Number.isFinite(coords.accuracy) ? coords.accuracy : undefined,
+            speed: Number.isFinite(coords.speed) && coords.speed >= 0
+              ? Math.round(coords.speed * 3.6)
+              : undefined,
+            heading: Number.isFinite(coords.heading) && coords.heading >= 0 && coords.heading <= 360
+              ? Math.round(coords.heading)
+              : undefined,
+            altitude: Number.isFinite(coords.altitude) ? coords.altitude : undefined,
             timestamp: new Date(position.timestamp || Date.now()).toISOString(),
           };
           this.lastLocation = loc;
@@ -94,15 +75,7 @@ class LocationService {
         },
         (error) => {
           console.warn('GPS single position warning:', error.message);
-          // Return default location if hardware GPS is warming up or emulator
-          resolve({
-            latitude: 37.7749,
-            longitude: -122.4194,
-            accuracy: 15,
-            speed: 0,
-            heading: 0,
-            timestamp: new Date().toISOString(),
-          });
+          reject(error);
         },
         {
           enableHighAccuracy: true,
@@ -120,13 +93,21 @@ class LocationService {
    * Updates coordinates at high frequency (1-2 seconds) and accumulates distance.
    * Filters out stationary duplicate coordinates (< 2 meters) and high inaccuracy readings.
    */
-  startLocationTracking(tripId, vehicleId, driverId, onLocationUpdate, onError) {
+  startLocationTracking(tripId, vehicleId, driverId, onLocationUpdate, onError, initialLocation) {
     if (this.isTracking) return;
 
     this.isTracking = true;
     this.activeTripId = tripId;
     this.totalDistanceKm = 0;
     this.locationHistory = [];
+    this.lastLocation =
+      Number.isFinite(initialLocation?.latitude) && Number.isFinite(initialLocation?.longitude)
+        ? {
+            latitude: initialLocation.latitude,
+            longitude: initialLocation.longitude,
+            speed: undefined,
+          }
+        : null;
 
     this.watchId = Geolocation.watchPosition(
       (position) => {
@@ -134,9 +115,13 @@ class LocationService {
         if (!this.isTracking || this.activeTripId !== tripId) return;
 
         const coords = position.coords;
-        const accuracy = coords.accuracy || 10;
-        const speedKmh = coords.speed && coords.speed > 0 ? Math.round(coords.speed * 3.6) : 0;
-        const heading = coords.heading != null ? Math.round(coords.heading) : 0;
+        const accuracy = Number.isFinite(coords.accuracy) ? coords.accuracy : undefined;
+        const speedKmh = Number.isFinite(coords.speed) && coords.speed >= 0
+          ? Math.round(coords.speed * 3.6)
+          : undefined;
+        const heading = Number.isFinite(coords.heading) && coords.heading >= 0 && coords.heading <= 360
+          ? Math.round(coords.heading)
+          : undefined;
 
         const newLoc = {
           tripId,
@@ -160,7 +145,7 @@ class LocationService {
           );
 
           // Deduplication: if vehicle is stationary (speed == 0) and distance < 2 meters, skip duplicate update
-          if (incDistance < 0.002 && speedKmh === 0) {
+          if (incDistance < 0.002 && (speedKmh === 0 || !Number.isFinite(speedKmh))) {
             return;
           }
 

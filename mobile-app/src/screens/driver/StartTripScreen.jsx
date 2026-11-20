@@ -18,7 +18,7 @@ import {
   ChevronRightIcon,
   CheckCircleIcon,
 } from '../../components/Icons';
-import { driverApi, routeApi, vehicleApi } from '../../services/api';
+import { driverApi, vehicleApi } from '../../services/api';
 import { locationService } from '../../services/locationService';
 
 export const StartTripScreen = ({ navigation }) => {
@@ -36,24 +36,16 @@ export const StartTripScreen = ({ navigation }) => {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [routesRes, vehiclesRes] = await Promise.all([
-        routeApi.getAllRoutes(),
-        vehicleApi.getAllVehicles(),
-      ]);
-
-      if (routesRes.data?.data) {
-        setRoutes(routesRes.data.data);
-        if (routesRes.data.data.length > 0) {
-          setSelectedRoute(routesRes.data.data[0]);
-        }
-      }
-
-      if (vehiclesRes.data?.data) {
-        setVehicles(vehiclesRes.data.data);
-        if (vehiclesRes.data.data.length > 0) {
-          setSelectedVehicle(vehiclesRes.data.data[0]);
-        }
-      }
+      const vehiclesRes = await vehicleApi.getMyVehicles();
+      const assignedVehicles = vehiclesRes.data?.data || [];
+      setVehicles(assignedVehicles);
+      setRoutes(
+        assignedVehicles
+          .map((vehicle) => vehicle.assignedRoute)
+          .filter((route, index, allRoutes) =>
+            route && allRoutes.findIndex((item) => item?._id === route._id) === index
+          )
+      );
     } catch (err) {
       console.log('Error loading start trip options:', err.message);
     } finally {
@@ -84,17 +76,23 @@ export const StartTripScreen = ({ navigation }) => {
         return;
       }
 
-      // 2. Obtain current GPS position
-      const initialPos = await locationService.getCurrentPosition();
+      // Start only from a device GPS reading; route coordinates are not a substitute.
+      let initialPos;
+      try {
+        initialPos = await locationService.getCurrentPosition();
+      } catch (locationError) {
+        Alert.alert('GPS Unavailable', locationError.message || 'Enable device location and try again.');
+        return;
+      }
 
       // 3. Call backend API to initiate the trip
       const res = await driverApi.startTrip({
         routeId: selectedRoute._id,
         vehicleId: selectedVehicle._id,
         startLocation: {
-          name: selectedRoute.startingPoint || 'Depot',
-          latitude: initialPos?.latitude || selectedRoute.coordinates?.[0]?.latitude || 37.7749,
-          longitude: initialPos?.longitude || selectedRoute.coordinates?.[0]?.longitude || -122.4194,
+          name: 'Current device GPS',
+          latitude: initialPos.latitude,
+          longitude: initialPos.longitude,
         },
       });
 
@@ -141,6 +139,15 @@ export const StartTripScreen = ({ navigation }) => {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        {vehicles.length === 0 && (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyTitle}>No registered buses</Text>
+            <Text style={styles.emptyText}>Register a bus and configure its ordered route stops before starting a trip.</Text>
+            <TouchableOpacity style={styles.addBusButton} onPress={() => navigation.navigate('AddBus')}>
+              <Text style={styles.addBusButtonText}>Register a Bus</Text>
+            </TouchableOpacity>
+          </View>
+        )}
         {/* Section 1: Route Selection */}
         <View style={styles.sectionHeaderRow}>
           <RouteIcon size={20} color={COLORS.primary} />
@@ -159,7 +166,11 @@ export const StartTripScreen = ({ navigation }) => {
                   SHADOWS.sm,
                 ]}
                 activeOpacity={0.8}
-                onPress={() => setSelectedRoute(route)}
+                onPress={() => {
+                  setSelectedRoute(route);
+                  const matchingVehicle = vehicles.find((vehicle) => vehicle.assignedRoute?._id === route._id);
+                  if (matchingVehicle) setSelectedVehicle(matchingVehicle);
+                }}
               >
                 <View style={styles.optionHeader}>
                   <View style={styles.routeBadge}>
@@ -215,7 +226,10 @@ export const StartTripScreen = ({ navigation }) => {
                   SHADOWS.sm,
                 ]}
                 activeOpacity={0.8}
-                onPress={() => setSelectedVehicle(v)}
+                onPress={() => {
+                  setSelectedVehicle(v);
+                  setSelectedRoute(v.assignedRoute || null);
+                }}
               >
                 <View style={styles.optionHeader}>
                   <View style={[styles.routeBadge, { backgroundColor: '#F1F5F9' }]}>
@@ -224,7 +238,7 @@ export const StartTripScreen = ({ navigation }) => {
                   <View style={{ flex: 1, marginLeft: 10 }}>
                     <Text style={styles.vehicleNumber}>{v.vehicleNumber}</Text>
                     <Text style={styles.vehicleType}>
-                      {v.vehicleType} • Capacity: {v.capacity || 45} passengers
+                      {v.vehicleType} • Capacity: {v.capacity} passengers
                     </Text>
                   </View>
                   {isSelected && (
@@ -427,4 +441,16 @@ const styles = StyleSheet.create({
   startBtn: {
     width: '100%',
   },
+  emptyState: {
+    backgroundColor: '#FFFFFF',
+    padding: 18,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.cardBorder,
+    marginBottom: 18,
+  },
+  emptyTitle: { color: COLORS.textPrimary, fontSize: 16, fontWeight: '800' },
+  emptyText: { color: COLORS.textSecondary, fontSize: 13, lineHeight: 18, marginTop: 5 },
+  addBusButton: { marginTop: 12, paddingVertical: 10, alignItems: 'center', borderRadius: 9, backgroundColor: '#E8F1FD' },
+  addBusButtonText: { color: COLORS.primary, fontWeight: '800' },
 });

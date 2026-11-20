@@ -17,6 +17,16 @@ const stopSchema = new mongoose.Schema({
     type: Number,
     required: true,
   },
+  placeId: {
+    type: String,
+    trim: true,
+    default: null,
+  },
+  dwellTimeSeconds: {
+    type: Number,
+    min: 0,
+    default: null,
+  },
 });
 
 const coordinateSchema = new mongoose.Schema({
@@ -54,6 +64,10 @@ const routeSchema = new mongoose.Schema(
     },
     stops: [stopSchema],
     coordinates: [coordinateSchema],
+    coordinatesVerified: {
+      type: Boolean,
+      default: false,
+    },
     active: {
       type: Boolean,
       default: true,

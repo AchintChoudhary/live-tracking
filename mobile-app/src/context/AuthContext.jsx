@@ -22,9 +22,30 @@ export const AuthProvider = ({ children }) => {
       const storedRole = await AsyncStorage.getItem('@transit_role');
 
       if (storedToken && storedUser) {
-        setToken(storedToken);
-        setUser(JSON.parse(storedUser));
-        setRole(storedRole);
+        try {
+          const profile = await authApi.getMe();
+          if (profile.data?.success) {
+            const currentUser = profile.data.data?.user || profile.data.data || profile.data.user;
+            if (currentUser) {
+              setToken(storedToken);
+              setUser(currentUser);
+              setRole(currentUser.role);
+              await AsyncStorage.setItem('@transit_user', JSON.stringify(currentUser));
+              await AsyncStorage.setItem('@transit_role', currentUser.role);
+              return;
+            }
+          }
+        } catch (profileError) {
+          console.log('Stored session validation failed:', profileError.response?.data?.message || profileError.message);
+          if ([401, 403].includes(profileError.response?.status)) {
+            await AsyncStorage.multiRemove(['@transit_token', '@transit_user', '@transit_role']);
+          } else {
+            const cachedUser = JSON.parse(storedUser);
+            setToken(storedToken);
+            setUser(cachedUser);
+            setRole(cachedUser.role || storedRole);
+          }
+        }
       }
     } catch (e) {
       console.log('Error restoring auth storage:', e);
@@ -91,6 +112,28 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const registerDriver = async (driverData) => {
+    try {
+      const res = await authApi.registerDriver(driverData);
+      if (res.data?.success) {
+        const { token: jwtToken, user: authUser } = res.data;
+        setToken(jwtToken);
+        setUser(authUser);
+        setRole(authUser.role);
+        await AsyncStorage.setItem('@transit_token', jwtToken);
+        await AsyncStorage.setItem('@transit_user', JSON.stringify(authUser));
+        await AsyncStorage.setItem('@transit_role', authUser.role);
+        return { success: true, user: authUser };
+      }
+      return { success: false, message: res.data?.message || 'Driver registration failed' };
+    } catch (err) {
+      return {
+        success: false,
+        message: err.response?.data?.message || 'Network error registering driver account',
+      };
+    }
+  };
+
   const logout = async () => {
     try {
       await AsyncStorage.removeItem('@transit_token');
@@ -113,6 +156,7 @@ export const AuthProvider = ({ children }) => {
         loading,
         login,
         register,
+        registerDriver,
         logout,
         isAuthenticated: !!token,
       }}

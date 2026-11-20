@@ -17,8 +17,8 @@ import { useAuth } from '../../context/AuthContext';
 
 export const DriverLoginScreen = ({ navigation }) => {
   const { login } = useAuth();
-  const [driverId, setDriverId] = useState('driver@transit.com');
-  const [password, setPassword] = useState('password123');
+  const [driverId, setDriverId] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState({});
 
@@ -74,7 +74,7 @@ export const DriverLoginScreen = ({ navigation }) => {
 
           <CustomInput
             label="Driver ID / Official Email"
-            placeholder="e.g. driver@transit.com"
+            placeholder="name@example.com"
             value={driverId}
             onChangeText={(txt) => {
               setDriverId(txt);
@@ -99,13 +99,6 @@ export const DriverLoginScreen = ({ navigation }) => {
             secureTextEntry
           />
 
-          <TouchableOpacity
-            style={styles.forgotBtn}
-            onPress={() => Alert.alert('Forgot Password', 'Please contact your fleet administrator at dispatch@transit.com or call dispatcher hotline.')}
-          >
-            <Text style={styles.forgotText}>Forgot password?</Text>
-          </TouchableOpacity>
-
           <CustomButton
             title="Driver Login"
             onPress={handleLogin}
@@ -113,11 +106,12 @@ export const DriverLoginScreen = ({ navigation }) => {
             style={styles.loginBtn}
           />
 
-          <View style={styles.demoBox}>
-            <Text style={styles.demoTitle}>Fleet Testing Credentials:</Text>
-            <Text style={styles.demoText}>ID: <Text style={styles.demoBold}>driver@transit.com</Text></Text>
-            <Text style={styles.demoText}>Pass: <Text style={styles.demoBold}>password123</Text></Text>
-          </View>
+          <TouchableOpacity
+            style={styles.registerLink}
+            onPress={() => navigation.navigate('DriverRegister')}
+          >
+            <Text style={styles.registerText}>New driver? <Text style={styles.registerTextStrong}>Create an account</Text></Text>
+          </TouchableOpacity>
         </View>
 
         {/* Switch to Passenger Application */}
@@ -204,40 +198,21 @@ const styles = StyleSheet.create({
     marginTop: 2,
     marginBottom: 20,
   },
-  forgotBtn: {
-    alignSelf: 'flex-end',
-    marginBottom: 20,
-    marginTop: -4,
-  },
-  forgotText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: COLORS.primary,
-  },
   loginBtn: {
     width: '100%',
   },
-  demoBox: {
+  registerLink: {
     marginTop: 18,
-    backgroundColor: '#F8FAFC',
-    padding: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    paddingVertical: 8,
+    alignItems: 'center',
   },
-  demoTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    marginBottom: 4,
-  },
-  demoText: {
-    fontSize: 12,
+  registerText: {
     color: COLORS.textSecondary,
+    fontSize: 13,
   },
-  demoBold: {
-    fontWeight: '700',
+  registerTextStrong: {
     color: COLORS.primary,
+    fontWeight: '800',
   },
   switchRoleBtn: {
     marginTop: 24,

@@ -3,6 +3,7 @@ const Trip = require('../models/Trip');
 const Vehicle = require('../models/Vehicle');
 const { isValidCoordinates } = require('../utils/distanceCalculator');
 const { activeTripLocations } = require('../sockets/socketHandler');
+const { getProvider, reverseGeocode: lookupAddress } = require('../services/geocodingService');
 
 // @desc    Update vehicle GPS location via REST API
 // @route   POST /api/location/update
@@ -14,9 +15,9 @@ exports.updateLocation = async (req, res, next) => {
       vehicleId,
       latitude,
       longitude,
-      accuracy = 0,
-      speed = 0,
-      heading = 0,
+      accuracy,
+      speed,
+      heading,
       timestamp,
     } = req.body;
 
@@ -34,6 +35,30 @@ exports.updateLocation = async (req, res, next) => {
         message: 'Please provide both tripId and vehicleId',
       });
     }
+    const validOptionalTelemetry = (value, min, max = Infinity) =>
+      value == null || (Number.isFinite(value) && value >= min && value <= max);
+    if (
+      !validOptionalTelemetry(accuracy, 0) ||
+      !validOptionalTelemetry(speed, 0) ||
+      !validOptionalTelemetry(heading, 0, 360)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid GPS telemetry values',
+      });
+    }
+
+    const locationTimestamp = timestamp ? new Date(timestamp) : new Date();
+    if (
+      Number.isNaN(locationTimestamp.getTime()) ||
+      locationTimestamp.getTime() > Date.now() + 30000 ||
+      Date.now() - locationTimestamp.getTime() > 120000
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: 'GPS update timestamp is stale or invalid',
+      });
+    }
 
     // 2. Validate trip existence and status
     const trip = await Trip.findById(tripId);
@@ -49,6 +74,21 @@ exports.updateLocation = async (req, res, next) => {
       return res.status(400).json({
         success: false,
         message: `Location update rejected: Trip is currently ${trip.status}. Only in-progress trips accept telemetry.`,
+      });
+    }
+
+    if (trip.vehicleId.toString() !== vehicleId.toString()) {
+      return res.status(400).json({
+        success: false,
+        message: 'vehicleId does not belong to this trip',
+      });
+    }
+
+    const latestLocation = await VehicleLocation.findOne({ tripId }).sort({ timestamp: -1 }).select('timestamp');
+    if (latestLocation && latestLocation.timestamp > locationTimestamp) {
+      return res.status(409).json({
+        success: false,
+        message: 'Out-of-order GPS update rejected',
       });
     }
 
@@ -70,10 +110,10 @@ exports.updateLocation = async (req, res, next) => {
       tripId,
       latitude,
       longitude,
-      accuracy,
-      speed,
-      heading,
-      timestamp: timestamp ? new Date(timestamp) : new Date(),
+      ...(accuracy != null ? { accuracy } : {}),
+      ...(speed != null ? { speed } : {}),
+      ...(heading != null ? { heading } : {}),
+      timestamp: locationTimestamp,
     });
 
     // 6. Update cache & broadcast to Socket.IO
@@ -83,9 +123,9 @@ exports.updateLocation = async (req, res, next) => {
       driverId: req.user._id,
       latitude,
       longitude,
-      accuracy,
-      speed: Math.round(speed),
-      heading: Math.round(heading),
+      ...(accuracy != null ? { accuracy } : {}),
+      ...(speed != null ? { speed: Math.round(speed) } : {}),
+      ...(heading != null ? { heading: Math.round(heading) } : {}),
       timestamp: vehicleLoc.timestamp.toISOString(),
     };
 
@@ -93,10 +133,17 @@ exports.updateLocation = async (req, res, next) => {
       activeTripLocations.set(tripId.toString(), locationPayload);
     }
 
+    await Vehicle.findByIdAndUpdate(vehicleId, {
+      currentLocation: {
+        latitude,
+        longitude,
+        timestamp: vehicleLoc.timestamp,
+      },
+    });
+
     const io = req.app.get('io');
     if (io) {
       io.to(`trip:${tripId}`).emit('vehicle:location', locationPayload);
-      io.emit('vehicle:location', locationPayload);
     }
 
     res.status(200).json({
@@ -132,6 +179,34 @@ exports.getVehicleLocation = async (req, res, next) => {
       success: true,
       data: location,
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.reverseGeocode = async (req, res, next) => {
+  try {
+    const latitude = Number(req.query.latitude);
+    const longitude = Number(req.query.longitude);
+    if (!isValidCoordinates(latitude, longitude)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid latitude and longitude are required',
+      });
+    }
+
+    if (getProvider() === 'none') {
+      return res.status(503).json({
+        success: false,
+        message: 'Reverse geocoding is not configured',
+      });
+    }
+
+    const address = await lookupAddress(latitude, longitude);
+    if (!address) {
+      return res.status(404).json({ success: false, message: 'No address found for these coordinates' });
+    }
+    res.json({ success: true, data: { address, latitude, longitude } });
   } catch (error) {
     next(error);
   }

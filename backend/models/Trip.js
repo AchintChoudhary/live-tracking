@@ -35,7 +35,7 @@ const tripSchema = new mongoose.Schema(
       default: 'On Route',
     },
     startLocation: {
-      name: { type: String, default: 'Origin Terminal' },
+      name: { type: String, default: null },
       latitude: { type: Number, required: true },
       longitude: { type: Number, required: true },
     },
@@ -46,11 +46,11 @@ const tripSchema = new mongoose.Schema(
     },
     distance: {
       type: Number,
-      default: 0, // distance in kilometers
+      default: null,
     },
     duration: {
       type: Number,
-      default: 0, // duration in seconds
+      default: null,
     },
   },
   {

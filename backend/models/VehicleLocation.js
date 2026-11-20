@@ -29,15 +29,19 @@ const vehicleLocationSchema = new mongoose.Schema(
     },
     accuracy: {
       type: Number,
-      default: 0, // accuracy radius in meters
+      min: 0,
+      default: null,
     },
     speed: {
       type: Number,
-      default: 0, // speed in km/h
+      min: 0,
+      default: null,
     },
     heading: {
       type: Number,
-      default: 0, // bearing in degrees (0-360)
+      min: 0,
+      max: 360,
+      default: null,
     },
     timestamp: {
       type: Date,

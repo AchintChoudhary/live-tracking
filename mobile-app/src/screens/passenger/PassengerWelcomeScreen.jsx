@@ -26,15 +26,15 @@ export const PassengerWelcomeScreen = ({ navigation }) => {
         <View style={styles.featuresList}>
           <View style={styles.featureItem}>
             <View style={styles.featureDot} />
-            <Text style={styles.featureText}>Live GPS bus positions updated every second</Text>
+            <Text style={styles.featureText}>Bus locations while a driver trip is active</Text>
           </View>
           <View style={styles.featureItem}>
             <View style={styles.featureDot} />
-            <Text style={styles.featureText}>Accurate arrival times & delay notifications</Text>
+            <Text style={styles.featureText}>Driving ETAs when a routing provider is configured</Text>
           </View>
           <View style={styles.featureItem}>
             <View style={styles.featureDot} />
-            <Text style={styles.featureText}>Interactive Google Maps with designated stops</Text>
+            <Text style={styles.featureText}>Interactive map with configured route stops</Text>
           </View>
         </View>
 
