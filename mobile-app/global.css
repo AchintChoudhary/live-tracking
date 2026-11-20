@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom application utility classes matching reference styling */
+.card-shadow {
+  shadow-color: #0F172A;
+  shadow-offset: 0px 4px;
+  shadow-opacity: 0.06;
+  shadow-radius: 12px;
+  elevation: 3;
+}
+
+.card-shadow-lg {
+  shadow-color: #0866E8;
+  shadow-offset: 0px 8px;
+  shadow-opacity: 0.15;
+  shadow-radius: 20px;
+  elevation: 8;
+}
